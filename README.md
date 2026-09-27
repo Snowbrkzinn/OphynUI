@@ -4,6 +4,8 @@
 
 > [!WARNING]
 > All credit for this UI goes to its respective owners; I don't deserve to receive any.
+>
+> This UI was (almost) entirely built using Vibecoding, so don't expect too much.
 > 
 
 ### Links
