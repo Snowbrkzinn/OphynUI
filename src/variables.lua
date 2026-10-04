@@ -29,6 +29,15 @@ return {
 	Website = "false",
 	Informations = "true",
 
+	-- Keyless mode: no key needed. Status becomes "Keyless" and Submit runs the Callback directly.
+	Keyless = {
+		enabled = false, -- true: turns keyless mode on
+		disabletextbox = true, -- dims the key box and blocks typing
+		disablegetkey = true, -- dims "Get a key" and blocks clicks
+		showcard = true, -- shows the "Keyless Mode" card
+		autoconfirm = false, -- true: runs the Callback automatically when the UI opens
+	},
+
 	-- Notification style
 	NotifStyle = "1",
 
