@@ -12,6 +12,7 @@ local Jnkie = import("utilities/jnkie")
 local Platoboost = import("utilities/platoboost")
 local Panda = import("utilities/panda")
 local Pages = import("components/window/pages")
+local Lucide = import("utilities/lucide")
 
 local FONT = Font.new(Images.FONT, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 local FONT_BOLD = Font.new(Images.FONT, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
@@ -567,13 +568,14 @@ local function icon(parent, x, y, color, image)
 		ImageTransparency = 0.9,
 		ZIndex = 0,
 	}, holder)
-	make("ImageLabel", {
+	local img = make("ImageLabel", {
 		Name = "iconimage",
 		Size = UDim2.new(1, 0, 1, 0),
 		BackgroundTransparency = 1,
-		Image = image,
 		ImageColor3 = iconRole(color),
 	}, holder)
+	-- `image` can be an asset id or a Lucide icon name ("house" / "lucide:house")
+	Lucide.apply(img, image)
 	return holder
 end
 
@@ -1672,7 +1674,7 @@ markTitleFont(hubTitle)
 		getKey.Text = (title and title ~= "") and title or "Get a key"
 		local image = getKeyIcon:FindFirstChild("iconimage")
 		if image then
-			image.Image = assetId(iconValue) or assetId(getkeySettings.icon) or Images.KEY
+			Lucide.apply(image, assetId(iconValue) or assetId(getkeySettings.icon) or Images.KEY)
 		end
 		local showArrow = #getMethods > 1
 		methodArrow.Visible = showArrow
