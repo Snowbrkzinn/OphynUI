@@ -745,6 +745,7 @@ __modules["components/window/ui"] = function()
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local player = Players.LocalPlayer
 
@@ -1391,6 +1392,8 @@ local function prep(container)
 				items[#items + 1] = { inst, "TextTransparency", inst.TextTransparency }
 			elseif inst:IsA("ImageLabel") or inst:IsA("ImageButton") then
 				items[#items + 1] = { inst, "ImageTransparency", inst.ImageTransparency }
+			elseif inst:IsA("ScrollingFrame") then
+				items[#items + 1] = { inst, "ScrollBarImageTransparency", inst.ScrollBarImageTransparency }
 			end
 		elseif inst:IsA("UIStroke") then
 			items[#items + 1] = { inst, "Transparency", inst.Transparency }
@@ -1609,7 +1612,38 @@ function UI.new(options)
 	local SHOW_INFO_CARD = cardFlag(true, "Informations", "Information", "informations", "information")
 	-- Only Discord enabled (no Website card): it starts expanded to fill the free space
 	local SHOW_INTRO = cardFlag(true, "Intro", "intro")
-	local DISCORD_STARTS_OPEN = SHOW_DISCORD_CARD and not SHOW_WEBSITE_CARD and HAS_DISCORD
+
+	-- Keyless mode: Keyless = { disabletextbox, disablegetkey, showcard, autoconfirm }.
+	-- Passing the table turns it on (enabled = false keeps it off); Keyless = true/false also works.
+	-- What the person passes to KeySystem.new wins over variables.lua.
+	local KL = { disabletextbox = true, disablegetkey = true, showcard = true, autoconfirm = false }
+	local KEYLESS = false
+	do
+		local raw
+		for _, source in ipairs({ options or {}, Variables }) do
+			local v = source.Keyless
+			if v == nil then
+				v = source.keyless
+			end
+			if v ~= nil then
+				raw = v
+				break
+			end
+		end
+		if type(raw) == "table" then
+			KEYLESS = asBool(raw.enabled, true)
+			for k, default in pairs(KL) do
+				KL[k] = asBool(raw[k], default)
+			end
+		elseif raw ~= nil then
+			KEYLESS = asBool(raw, false)
+		end
+	end
+	local SHOW_KEYLESS_CARD = KEYLESS and KL.showcard
+	local KEYLESS_KEY = "" -- what the Callback receives in keyless mode
+
+	-- With the Keyless card on, Discord starts collapsed so both cards fit
+	local DISCORD_STARTS_OPEN = SHOW_DISCORD_CARD and not SHOW_WEBSITE_CARD and HAS_DISCORD and not SHOW_KEYLESS_CARD
 
 	-- Notification style: "1" Stripe, "2" Pill, "3" Island, "4" Ring, "5" Solid
 	local NOTIF_STYLE = "1"
@@ -2229,7 +2263,7 @@ markTitleFont(hubTitle)
 	local hubSubtitle = text(left, HUB_SUBTITLE, 66, 42, 190, 14, 12, "muted")
 	hubSubtitle.TextTruncate = Enum.TextTruncate.AtEnd
 
-	text(left, "License key", 22, 78, 228, 14, 11, "muted")
+	local licenseLabel = text(left, "License key", 22, 78, 228, 14, 11, "muted")
 
 	local inputBox = frame(left, 22, 96, 228, 36, "input", 0)
 	inputBox.ClipsDescendants = true
@@ -2358,7 +2392,7 @@ markTitleFont(hubTitle)
 	end
 
 	methodArrow.MouseButton1Click:Connect(function()
-		if not state.ready or state.closing or #getMethods < 2 then
+		if not state.ready or state.closing or #getMethods < 2 or (KEYLESS and KL.disablegetkey) then
 			return
 		end
 		if methodDropdown.Visible then
@@ -2456,6 +2490,27 @@ markTitleFont(hubTitle)
 
 	local rightDivider = frame(right, 20, 148, 147, 1, "stroke", 0)
 
+	-- Scrollable card list. Cards are laid out inside it (see layoutCards); once they
+	-- no longer fit it can be scrolled with the wheel, by touch, or by dragging.
+	-- CARD_PAD leaves room for the 1px outer card strokes, which would be clipped otherwise.
+	local CARD_PAD = 2
+	local CARD_VIEW_BOTTOM = 256 -- bottom edge of the visible card area
+	local cardScroll = make("ScrollingFrame", {
+		Name = "Cards",
+		Position = UDim2.new(0, 20 - CARD_PAD, 0, 158 - CARD_PAD),
+		Size = UDim2.new(0, 147 + CARD_PAD + 5, 0, CARD_VIEW_BOTTOM - 158 + CARD_PAD),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ElasticBehavior = Enum.ElasticBehavior.Never,
+		VerticalScrollBarInset = Enum.ScrollBarInset.None,
+		ScrollBarThickness = 2,
+		ScrollBarImageTransparency = 0.45,
+		ClipsDescendants = true,
+	}, right)
+	setRole(cardScroll, "ScrollBarImageColor3", "muted")
+
 	local function linkButton(y, title, subtitle, image)
 		local btn = make("TextButton", {
 			Name = "TextButton",
@@ -2465,7 +2520,7 @@ markTitleFont(hubTitle)
 			BorderSizePixel = 0,
 			AutoButtonColor = false,
 			Text = "",
-		}, right)
+		}, cardScroll)
 		round(btn, 8, "stroke")
 		local iconHolder = icon(btn, 11, 12, "accent", image)
 		local titleLabel = text(btn, title, 36, 6, 106, 14, 12, "text")
@@ -2526,6 +2581,41 @@ markTitleFont(hubTitle)
 	-- Information card: local stats only (valid keys, expired keys, last used)
 	local infoCard, infoIcon, infoTitle, infoSub = linkButton(254, "Information", "Tap to view", Images.KEY)
 	infoCard.Visible = SHOW_INFO_CARD
+	infoCard.ClipsDescendants = true
+	infoTitle.TextTruncate = Enum.TextTruncate.AtEnd
+
+	-- Expanded Information card: same look as the expanded Discord card
+	local INFO_OPEN_H = 92
+	local infoExtra = frame(infoCard, 0, 0, 147, INFO_OPEN_H)
+	infoExtra.Visible = false
+
+	local infoIconBox = frame(infoExtra, 9, 7, 26, 26, "input", 0)
+	round(infoIconBox, 8, "stroke")
+	icon(infoIconBox, 5, 5, "accent", Images.KEY)
+
+	frame(infoExtra, 10, 41, 127, 1, "stroke", 0)
+
+	local function infoStat(x, label, dotColor)
+		local num = text(infoExtra, "0", x, 46, 62, 16, 13, "text")
+		markBoldFont(num)
+		local dot = frame(infoExtra, x, 66, 6, 6, dotColor, 0)
+		make("UICorner", { CornerRadius = UDim.new(1, 0) }, dot)
+		text(infoExtra, label, x + 10, 62, 50, 14, 10, "muted")
+		return num
+	end
+	local validNum = infoStat(12, "Valid", "success")
+	local expiredNum = infoStat(80, "Expired", "warn")
+
+	text(infoExtra, "Last used", 12, 77, 56, 13, 10, "muted")
+	local lastUsedValue = text(infoExtra, "Never", 66, 77, 69, 13, 11, "text", Enum.TextXAlignment.Right)
+	lastUsedValue.TextTruncate = Enum.TextTruncate.AtEnd
+
+	local infoExtraItems = prep(infoExtra)
+	local infoIconItems = prep(infoIcon)
+
+	-- Keyless Mode card: informational only (no click)
+	local keylessCard = linkButton(206, "Keyless Mode", "No key needed", Images.KEYLESS)
+	keylessCard.Visible = SHOW_KEYLESS_CARD
 
 	local closeBtn = make("TextButton", {
 		Name = "CloseButton",
@@ -2577,6 +2667,57 @@ markTitleFont(hubTitle)
 	moonBtn.Visible = SHOW_CHANGE_THEME
 
 	local closeGui
+
+	-- Keyless mode: dim + lock the disabled parts. This runs BEFORE prep(content) on
+	-- purpose, so the dimmed transparencies become the "original" values that
+	-- fade() restores (a later fade-in would otherwise undo the dimming).
+	if KEYLESS then
+		local DIM = 0.5
+		local function dim(container)
+			local function apply(inst)
+				if inst:IsA("GuiObject") then
+					inst.BackgroundTransparency = 1 - (1 - inst.BackgroundTransparency) * DIM
+					if inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
+						inst.TextTransparency = 1 - (1 - inst.TextTransparency) * DIM
+					elseif inst:IsA("ImageLabel") or inst:IsA("ImageButton") then
+						inst.ImageTransparency = 1 - (1 - inst.ImageTransparency) * DIM
+					end
+				elseif inst:IsA("UIStroke") then
+					inst.Transparency = 1 - (1 - inst.Transparency) * DIM
+				end
+			end
+			apply(container)
+			for _, d in ipairs(container:GetDescendants()) do
+				apply(d)
+			end
+		end
+
+		if KL.disabletextbox then
+			dim(licenseLabel)
+			dim(inputBox)
+			pcall(function()
+				keyBox.TextEditable = false
+				keyBox.Active = false
+				keyBox.Interactable = false
+			end)
+			keyBox.Focused:Connect(function()
+				keyBox:ReleaseFocus()
+			end)
+		end
+
+		if KL.disablegetkey then
+			dim(getKey)
+			pcall(function()
+				getKey.Active = false
+				getKey.Interactable = false
+				methodArrow.Active = false
+				methodArrow.Interactable = false
+			end)
+		end
+
+		statusValue.Text = "Keyless"
+		setRole(statusValue, "TextColor3", "accent")
+	end
 
 	local spinnerItems = prep(spinnerHolder)
 	local contentItems = prep(content)
@@ -2659,6 +2800,9 @@ markTitleFont(hubTitle)
 
 	getKey.MouseButton1Click:Connect(function()
 		if not state.ready or state.closing then
+			return
+		end
+		if KEYLESS and KL.disablegetkey then
 			return
 		end
 
@@ -2760,6 +2904,11 @@ markTitleFont(hubTitle)
 	local discordInfo = { fetching = false, ok = false, iconLoaded = false, last = 0, online = 0, offline = 0 }
 
 	local discordOpen = false
+	local infoOpen = false
+
+	local function anyCardOpen()
+		return discordOpen or infoOpen
+	end
 
 	local function refreshDiscordTitle()
 		local target = (discordOpen and discordInfo.name) or "Discord"
@@ -2863,13 +3012,17 @@ markTitleFont(hubTitle)
 		task.spawn(fetchDiscord)
 	end
 
-	-- Stacks whichever cards are enabled (Discord, Website, Information, in that
-	-- order), shifting Website/Information down while Discord is expanded and back
-	-- up when it collapses.
+	-- Stacks whichever cards are enabled (Discord, Keyless, Website, Information, in
+	-- that order) inside the scroll frame. Expanding a card (Discord / Information)
+	-- pushes the cards below it down and moves the whole list up, hiding the
+	-- Executor / Status rows. Anything that doesn't fit becomes scrollable.
 	local CARD_GAP = 8
 	local cardOrder = {}
 	if SHOW_DISCORD_CARD then
 		table.insert(cardOrder, discord)
+	end
+	if SHOW_KEYLESS_CARD then
+		table.insert(cardOrder, keylessCard)
 	end
 	if SHOW_WEBSITE_CARD then
 		table.insert(cardOrder, website)
@@ -2878,31 +3031,140 @@ markTitleFont(hubTitle)
 		table.insert(cardOrder, infoCard)
 	end
 
-	local function layoutCards(instant)
-		local Quint = Enum.EasingStyle.Quint
-		local divider = discordOpen and 106 or 148
-		if instant then
-			rightDivider.Position = UDim2.new(0, 20, 0, divider)
-		else
-			tween(rightDivider, 0.55, { Position = UDim2.new(0, 20, 0, divider) }, Quint)
+	local function cardHeight(card)
+		if card == discord and discordOpen then
+			return 82
 		end
+		if card == infoCard and infoOpen then
+			return INFO_OPEN_H
+		end
+		return 40
+	end
 
-		local y = discordOpen and 114 or 158
+	local layoutToken = 0
+
+	-- focusCard: scrolled into view when the layout changes (used when a card expands)
+	local function layoutCards(instant, focusCard)
+		local Quint = Enum.EasingStyle.Quint
+		local open = anyCardOpen()
+		local divider = open and 106 or 148
+		local top = open and 114 or 158
+
+		local y = CARD_PAD
+		local focusTop, focusBottom
 		for _, card in ipairs(cardOrder) do
-			local h = (card == discord and discordOpen) and 82 or 40
+			local h = cardHeight(card)
+			if card == focusCard then
+				focusTop, focusBottom = y - CARD_PAD, y + h + CARD_PAD
+			end
 			if instant then
-				card.Position = UDim2.new(0, 20, 0, y)
+				card.Position = UDim2.new(0, CARD_PAD, 0, y)
 				card.Size = UDim2.new(0, 147, 0, h)
 			else
 				tween(card, 0.55, {
-					Position = UDim2.new(0, 20, 0, y),
+					Position = UDim2.new(0, CARD_PAD, 0, y),
 					Size = UDim2.new(0, 147, 0, h),
 				}, Quint)
 			end
 			y = y + h + CARD_GAP
 		end
+
+		local canvasH = math.max(y - CARD_GAP + CARD_PAD, 0)
+		local viewH = CARD_VIEW_BOTTOM - top + CARD_PAD
+		local maxPos = math.max(canvasH - viewH, 0)
+		local pos = cardScroll.CanvasPosition.Y
+		local targetPos = math.clamp(pos, 0, maxPos)
+		if focusTop then
+			if focusBottom > targetPos + viewH then
+				targetPos = focusBottom - viewH
+			end
+			if focusTop < targetPos then
+				targetPos = focusTop
+			end
+			targetPos = math.clamp(targetPos, 0, maxPos)
+		end
+
+		local scrollPos = UDim2.new(0, 20 - CARD_PAD, 0, top - CARD_PAD)
+		local scrollSize = UDim2.new(0, 147 + CARD_PAD + 5, 0, viewH)
+		local canvasSize = UDim2.new(0, 0, 0, canvasH)
+
+		layoutToken += 1
+		local token = layoutToken
+
+		if instant then
+			rightDivider.Position = UDim2.new(0, 20, 0, divider)
+			cardScroll.Position = scrollPos
+			cardScroll.Size = scrollSize
+			cardScroll.CanvasSize = canvasSize
+			cardScroll.CanvasPosition = Vector2.new(0, targetPos)
+			return
+		end
+
+		tween(rightDivider, 0.55, { Position = UDim2.new(0, 20, 0, divider) }, Quint)
+
+		-- Grow the canvas right away (so the scroll target is reachable); shrink it only
+		-- once the cards finished moving (so the position doesn't get clamped mid-tween).
+		if canvasH >= cardScroll.CanvasSize.Y.Offset then
+			cardScroll.CanvasSize = canvasSize
+		else
+			task.delay(0.58, function()
+				if token == layoutToken then
+					cardScroll.CanvasSize = canvasSize
+				end
+			end)
+		end
+		tween(cardScroll, 0.55, {
+			Position = scrollPos,
+			Size = scrollSize,
+			CanvasPosition = Vector2.new(0, targetPos),
+		}, Quint)
 	end
 	layoutCards(true)
+
+	-- Dragging the card list with the mouse (the wheel and touch scroll natively).
+	-- A drag never counts as a click on the card under the cursor.
+	local suppressClick = false
+	local dragging, dragStartY, dragStartCanvas = false, 0, 0
+	local function onPress(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 or dragging or not state.ready then
+			return
+		end
+		if cardScroll.CanvasSize.Y.Offset <= cardScroll.AbsoluteSize.Y then
+			return
+		end
+		dragging = true
+		dragStartY = input.Position.Y
+		dragStartCanvas = cardScroll.CanvasPosition.Y
+	end
+	cardScroll.InputBegan:Connect(onPress)
+	for _, card in ipairs(cardOrder) do
+		card.InputBegan:Connect(onPress)
+	end
+	local dragMove = UserInputService.InputChanged:Connect(function(input)
+		if not dragging or input.UserInputType ~= Enum.UserInputType.MouseMovement then
+			return
+		end
+		local delta = input.Position.Y - dragStartY
+		if not suppressClick and math.abs(delta) < 5 then
+			return
+		end
+		suppressClick = true
+		local maxPos = math.max(cardScroll.CanvasSize.Y.Offset - cardScroll.AbsoluteSize.Y, 0)
+		cardScroll.CanvasPosition = Vector2.new(0, math.clamp(dragStartCanvas - delta, 0, maxPos))
+	end)
+	local dragEnd = UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 or not dragging then
+			return
+		end
+		dragging = false
+		task.delay(0.1, function()
+			suppressClick = false
+		end)
+	end)
+	root.Destroying:Connect(function()
+		dragMove:Disconnect()
+		dragEnd:Disconnect()
+	end)
 
 	local discordToken = 0
 
@@ -2913,7 +3175,7 @@ markTitleFont(hubTitle)
 		local token = discordToken
 		local Quint = Enum.EasingStyle.Quint
 
-		layoutCards()
+		layoutCards(false, open and discord or nil)
 
 		local textX = open and 40 or 36
 		tween(discordTitle, 0.4, { Position = UDim2.new(0, textX, 0, 6) }, Quint)
@@ -2922,7 +3184,7 @@ markTitleFont(hubTitle)
 			Size = UDim2.new(0, open and 102 or 106, 0, 13),
 		}, Quint)
 
-		fade(rowsItems, open and 0 or 1, 0.25)
+		fade(rowsItems, anyCardOpen() and 0 or 1, 0.25)
 		fade(discordIconItems, open and 0 or 1, 0.2)
 
 		if open then
@@ -2961,7 +3223,7 @@ markTitleFont(hubTitle)
 	end
 
 	discord.MouseButton1Click:Connect(function()
-		if not state.ready or state.closing then
+		if not state.ready or state.closing or suppressClick then
 			return
 		end
 		if not HAS_DISCORD then
@@ -2972,6 +3234,9 @@ markTitleFont(hubTitle)
 	end)
 
 	linkHit.MouseButton1Click:Connect(function()
+		if suppressClick then
+			return
+		end
 		copyLink(LINKS.discord, "Discord invite", "discord")
 	end)
 	linkHit.MouseEnter:Connect(function()
@@ -2983,7 +3248,7 @@ markTitleFont(hubTitle)
 		tween(discordSub, 0.15, { TextColor3 = C.muted })
 	end)
 	website.MouseButton1Click:Connect(function()
-		if not state.ready or state.closing then
+		if not state.ready or state.closing or suppressClick then
 			return
 		end
 		if not HAS_WEBSITE then
@@ -2993,34 +3258,103 @@ markTitleFont(hubTitle)
 		copyLink(LINKS.website, "Website link", "link")
 	end)
 
-	infoCard.MouseButton1Click:Connect(function()
-		if not state.ready or state.closing then
+	local function refreshInfo()
+		validNum.Text = formatNumber(STATS.valid)
+		expiredNum.Text = formatNumber(STATS.expired)
+		lastUsedValue.Text = formatAgo(STATS.last)
+	end
+	refreshInfo()
+
+	local function setLabelText(label, str)
+		if label.Text == str then
 			return
 		end
-		notify(
-			"Key history",
-			("Valid: %d   Expired: %d   Last used: %s"):format(STATS.valid, STATS.expired, formatAgo(STATS.last)),
-			"success",
-			"key",
-			6
-		)
+		if not state.ready then
+			label.Text = str
+			return
+		end
+		tween(label, 0.12, { TextTransparency = 1 })
+		task.delay(0.12, function()
+			if state.closing then
+				return
+			end
+			label.Text = str
+			tween(label, 0.15, { TextTransparency = 0 })
+		end)
+	end
+
+	local infoToken = 0
+
+	local function setInfo(open)
+		infoOpen = open
+		infoToken += 1
+		local token = infoToken
+		local Quint = Enum.EasingStyle.Quint
+
+		if open then
+			refreshInfo()
+		end
+		setLabelText(infoSub, open and "Key history" or "Tap to view")
+
+		layoutCards(false, open and infoCard or nil)
+
+		local textX = open and 40 or 36
+		tween(infoTitle, 0.4, { Position = UDim2.new(0, textX, 0, 6) }, Quint)
+		tween(infoSub, 0.4, {
+			Position = UDim2.new(0, textX, 0, 21),
+			Size = UDim2.new(0, open and 102 or 106, 0, 13),
+		}, Quint)
+
+		fade(rowsItems, anyCardOpen() and 0 or 1, 0.25)
+		fade(infoIconItems, open and 0 or 1, 0.2)
+
+		if open then
+			infoExtra.Visible = true
+			fade(infoExtraItems, 0)
+			task.delay(0.15, function()
+				if token == infoToken then
+					fade(infoExtraItems, 1, 0.3)
+				end
+			end)
+		else
+			fade(infoExtraItems, 0, 0.15)
+			task.delay(0.17, function()
+				if token == infoToken then
+					infoExtra.Visible = false
+				end
+			end)
+		end
+	end
+
+	infoCard.MouseButton1Click:Connect(function()
+		if not state.ready or state.closing or suppressClick then
+			return
+		end
+		setInfo(not infoOpen)
 	end)
 
 	local checkingKey = false
 
-	local openHidden = {}
+	-- While a card is expanded the Executor/Status rows stay hidden, and the small
+	-- icon of the expanded card is replaced by its bigger one
+	local rowsHidden, discordIconHidden, infoIconHidden = {}, {}, {}
 	for _, it in ipairs(rowsItems) do
-		openHidden[it[1]] = true
+		rowsHidden[it[1]] = true
 	end
 	for _, it in ipairs(discordIconItems) do
-		openHidden[it[1]] = true
+		discordIconHidden[it[1]] = true
+	end
+	for _, it in ipairs(infoIconItems) do
+		infoIconHidden[it[1]] = true
 	end
 
 	local function fadeContent(alpha, time)
-		if discordOpen and alpha > 0 then
+		if anyCardOpen() and alpha > 0 then
 			local filtered = {}
 			for _, it in ipairs(contentItems) do
-				if not openHidden[it[1]] then
+				local inst = it[1]
+				local hide = rowsHidden[inst] or (discordOpen and discordIconHidden[inst]) or (infoOpen and infoIconHidden[inst])
+				if not hide then
 					filtered[#filtered + 1] = it
 				end
 			end
@@ -3099,6 +3433,10 @@ markTitleFont(hubTitle)
 
 		local result
 		task.spawn(function()
+			if KEYLESS then
+				result = { ok = true, valid = true }
+				return
+			end
 			local ok, valid, reason = pcall(validateKey, key)
 			result = { ok = ok, valid = valid, reason = reason }
 		end)
@@ -3127,6 +3465,7 @@ markTitleFont(hubTitle)
 				if detail:lower():find("expir") then
 					STATS.expired += 1
 					saveStats()
+					refreshInfo()
 				end
 				notify("Invalid key", detail, "error")
 			else
@@ -3139,17 +3478,23 @@ markTitleFont(hubTitle)
 			return
 		end
 
-		statusValue.Text = "Key valid"
-		setRole(statusValue, "TextColor3", "success")
-		checkText.Text = isSavedKey and "Saved Key Found!" or "Correct Key!"
+		if KEYLESS then
+			statusValue.Text = "Keyless"
+			setRole(statusValue, "TextColor3", "accent")
+			checkText.Text = "Keyless Access!"
+		else
+			statusValue.Text = "Key valid"
+			setRole(statusValue, "TextColor3", "success")
+			checkText.Text = isSavedKey and "Saved Key Found!" or "Correct Key!"
 
-		if KEY_SAVE then
-			safeWriteFile(KEY_FILE, key)
+			if KEY_SAVE then
+				safeWriteFile(KEY_FILE, key)
+			end
+
+			STATS.valid += 1
+			STATS.last = os.time()
+			saveStats()
 		end
-
-		STATS.valid += 1
-		STATS.last = os.time()
-		saveStats()
 
 		fade(spinnerItems, 0, 0.25)
 		task.wait(0.25)
@@ -3253,6 +3598,11 @@ markTitleFont(hubTitle)
 
 	submit.MouseButton1Click:Connect(function()
 		if not state.ready or state.closing or checkingKey then
+			return
+		end
+
+		if KEYLESS then
+			runKeyCheck(KEYLESS_KEY)
 			return
 		end
 
@@ -3447,7 +3797,12 @@ markTitleFont(hubTitle)
 		task.wait(0.3)
 		state.ready = true
 
-		if SAVED_KEY and not checkingKey then
+		if KEYLESS then
+			if KL.autoconfirm and not checkingKey then
+				task.wait(0.15)
+				runKeyCheck(KEYLESS_KEY)
+			end
+		elseif SAVED_KEY and not checkingKey then
 			keyBox.Text = SAVED_KEY
 			task.wait(0.15)
 			runKeyCheck(SAVED_KEY, true)
@@ -3519,6 +3874,7 @@ local Images = {
 	MOON_ICON = "rbxassetid://83380517901735",
 	SHADOW = "rbxassetid://6014261993",
 	GAME_PLACEHOLDER = "rbxassetid://74584987850498",
+	KEYLESS = "rbxassetid://130551565616516", -- lightning bolt (Keyless Mode card)
 }
 
 return Images
@@ -4133,6 +4489,15 @@ return {
 	Discord = "true",
 	Website = "false",
 	Informations = "true",
+
+	-- Keyless mode: no key needed. Status becomes "Keyless" and Submit runs the Callback directly.
+	Keyless = {
+		enabled = false, -- true: turns keyless mode on
+		disabletextbox = true, -- dims the key box and blocks typing
+		disablegetkey = true, -- dims "Get a key" and blocks clicks
+		showcard = true, -- shows the "Keyless Mode" card
+		autoconfirm = false, -- true: runs the Callback automatically when the UI opens
+	},
 
 	-- Notification style
 	NotifStyle = "1",
