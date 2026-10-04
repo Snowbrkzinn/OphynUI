@@ -11,6 +11,7 @@ local Variables = import("variables")
 local Jnkie = import("utilities/jnkie")
 local Platoboost = import("utilities/platoboost")
 local Panda = import("utilities/panda")
+local Pages = import("components/window/pages")
 
 local FONT = Font.new(Images.FONT, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 local FONT_BOLD = Font.new(Images.FONT, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
@@ -1928,6 +1929,45 @@ markTitleFont(hubTitle)
 
 	local closeGui
 
+	-- Page 2: a down arrow at the bottom of the Key System slides it up and brings in the
+	-- topbar + Tabs (OphynWindow({ Title, Icon }), Tab:Section, Tab:Paragraph). Kept in ctx
+	-- so it doesn't take another local in UI.new (already close to Lua's limit). It is built
+	-- before prep(content) on purpose, so the arrow fades in and out with the Key System.
+	ctx.pages = Pages.new({
+		C = C,
+		make = make,
+		round = round,
+		tween = tween,
+		prep = prep,
+		fade = fade,
+		setRole = setRole,
+		icon = icon,
+		assetId = assetId,
+		contrastOn = contrastOn,
+		iconRole = iconRole,
+		logoRole = logoRole,
+		markTitleFont = markTitleFont,
+		FONT = FONT,
+		FONT_BOLD = FONT_BOLD,
+		images = Images,
+		canvas = canvas,
+		content = content,
+		state = state,
+		width = FINAL_W,
+		height = FINAL_H,
+		title = HUB_NAME,
+		logo = LOGO,
+		onOpen = function()
+			closeMethodDropdown()
+		end,
+		requestClose = function()
+			if not state.ready or state.closing then
+				return
+			end
+			task.spawn(closeGui)
+		end,
+	})
+
 	-- Keyless mode: dim + lock the disabled parts. This runs BEFORE prep(content) on
 	-- purpose, so the dimmed transparencies become the "original" values that
 	-- fade() restores (a later fade-in would otherwise undo the dimming).
@@ -2897,6 +2937,7 @@ markTitleFont(hubTitle)
 		if not SHOW_INTRO then
 			-- No intro: plain fade-out
 			fadeContent(0, 0.3)
+			ctx.pages.fadeOut(0.3)
 			tween(canvas, 0.35, { BackgroundTransparency = 1 })
 			tween(decorGroup, 0.35, { GroupTransparency = 1 })
 			tween(borderStroke, 0.35, { Transparency = 1 })
@@ -2907,6 +2948,7 @@ markTitleFont(hubTitle)
 		end
 
 		fadeContent(0, 0.2)
+		ctx.pages.fadeOut(0.2)
 
 		task.wait(0.2)
 		content.Visible = false
@@ -3104,9 +3146,16 @@ markTitleFont(hubTitle)
 		UI.SetTitleFont(font)
 		return self
 	end
+	-- OphynWindow:Tab({ Title = "...", Icon = "..." }) -> Tab (same as OphynWindow({ ... }))
+	function api:Tab(props)
+		return ctx.pages.createTab(props)
+	end
 	api.Gui = root
 
 	return setmetatable(api, {
+		__call = function(_, props)
+			return ctx.pages.createTab(props)
+		end,
 		__index = function(_, key)
 			local value = root[key]
 			if type(value) == "function" then
