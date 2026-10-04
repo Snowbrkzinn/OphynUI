@@ -1,21 +1,3 @@
--- src/components/window/pages.lua
--- Page 2 of the window. It sits right below the Key System: a down arrow at the bottom
--- of the Key System slides the Key System up and brings this page in (a topbar, the Tabs
--- under it, and the content of the selected Tab: Sections and Paragraphs).
---
---   local OphynWindow = KeySystem.new({ ... })
---
---   local Tab = OphynWindow({ Title = "Main", Icon = "rbxassetid://..." })
---
---   Tab:Section({ Title = "Section", Icon = "rbxassetid://..." })
---
---   Tab:Paragraph({
---       Title = "Paragraph",
---       Desc = "Test Paragraph",
---       Color = "Red", -- leave it blank to follow the theme
---       Buttons = { { Icon = "rbxassetid://...", Title = "Button 1", Callback = function() end } },
---   })
-
 local Pages = {}
 
 local NAMED_COLORS = {
@@ -35,8 +17,6 @@ local NAMED_COLORS = {
 	black = Color3.fromRGB(16, 16, 16),
 }
 
--- Accepts a Color3, a color name ("Red", "Blue", ...) or a hex string ("#RRGGBB").
--- Returns nil for anything else, which makes the Paragraph follow the theme.
 local function parseColor(value)
 	if value == nil or value == "" then
 		return nil
@@ -71,11 +51,18 @@ function Pages.new(ctx)
 	local SLIDE_TIME = 0.55
 	local Quint = Enum.EasingStyle.Quint
 
-	-- false when "Change icons color" is off: icons stay white and are never recolored
+	local SECTION_TEXT_SIZE = 15
+	local SECTION_TEXT_TRANSPARENCY = 0.35
+
+	local TAB_SLIDE = 10
+	local TAB_IN_TIME = 0.32
+	local TAB_STAGGER = 0.045
+	local TAB_STAGGER_MAX = 0.4
+
+	local NEXT_ARROW_ROTATION = 90
+
 	local tintIcons = type(iconRole("muted")) == "string"
 
-	-- A chevron drawn with two rotated bars (no image asset needed, follows the theme).
-	-- Returns the holder and its two bars.
 	local function chevron(parent, down, role, scale)
 		scale = scale or 1
 		local cw, ch = 16 * scale, 10 * scale
@@ -125,9 +112,6 @@ function Pages.new(ctx)
 		}, parent)
 	end
 
-	---------------------------------------------------------------------------
-	-- The page itself: starts one window-height below, hidden
-	---------------------------------------------------------------------------
 	local page = make("Frame", {
 		Name = "Page2",
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -138,7 +122,6 @@ function Pages.new(ctx)
 		Visible = false,
 	}, canvas)
 
-	-- Topbar: logo + title on the left, back arrow + close on the right
 	local topbar = make("Frame", {
 		Name = "Topbar",
 		Size = UDim2.new(0, W, 0, TOPBAR_H),
@@ -226,7 +209,6 @@ function Pages.new(ctx)
 
 	line(page, 14, TOPBAR_H, W - 28, 1)
 
-	-- Tabs, under the topbar (left column)
 	local sidebar = make("ScrollingFrame", {
 		Name = "Tabs",
 		Position = UDim2.new(0, 0, 0, TOPBAR_H + 1),
@@ -252,7 +234,6 @@ function Pages.new(ctx)
 
 	line(page, SIDE_W, TOPBAR_H + 10, 1, H - TOPBAR_H - 20)
 
-	-- Where the selected Tab's content shows up (right column)
 	local holder = make("Frame", {
 		Name = "TabContent",
 		Position = UDim2.new(0, SIDE_W + 1, 0, TOPBAR_H + 1),
@@ -262,9 +243,6 @@ function Pages.new(ctx)
 		ClipsDescendants = true,
 	}, page)
 
-	---------------------------------------------------------------------------
-	-- Sliding between the Key System and this page
-	---------------------------------------------------------------------------
 	local opened, moving = false, false
 	local current = nil
 
@@ -302,7 +280,6 @@ function Pages.new(ctx)
 		end)
 	end
 
-	-- Used when the whole UI closes while this page is showing
 	local function fadeOut(time)
 		if not page.Visible then
 			return
@@ -313,9 +290,6 @@ function Pages.new(ctx)
 		end)
 	end
 
-	-- The down arrow, in the middle of the bottom of the Key System. It only shows up
-	-- once there is at least one Tab, so a script that never creates one doesn't end up
-	-- with an arrow that leads to an empty page.
 	local nextBtn = make("TextButton", {
 		Name = "NextPage",
 		AnchorPoint = Vector2.new(0.5, 1),
@@ -328,15 +302,24 @@ function Pages.new(ctx)
 		Visible = false,
 		ZIndex = 5,
 	}, content)
-	local nextChevron, nextBars = chevron(nextBtn, true, "muted", 1.1)
-	nextChevron.AnchorPoint = Vector2.new(0.5, 0.5)
-	nextChevron.Position = UDim2.new(0.5, 0, 0.5, 2)
+
+	local nextIcon = icon(nextBtn, 0, 0, "muted", Images.SUBMIT)
+	nextIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	nextIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
+	nextIcon.Rotation = NEXT_ARROW_ROTATION
+	local nextIconImage = nextIcon:FindFirstChild("iconimage")
+
+	local function tintNext(color)
+		if tintIcons and nextIconImage then
+			tween(nextIconImage, 0.15, { ImageColor3 = color })
+		end
+	end
 
 	nextBtn.MouseEnter:Connect(function()
-		tintBars(nextBars, C.text)
+		tintNext(C.text)
 	end)
 	nextBtn.MouseLeave:Connect(function()
-		tintBars(nextBars, C.muted)
+		tintNext(C.muted)
 	end)
 	nextBtn.MouseButton1Click:Connect(function()
 		if not state.ready or state.closing then
@@ -355,9 +338,6 @@ function Pages.new(ctx)
 		ctx.requestClose()
 	end)
 
-	---------------------------------------------------------------------------
-	-- Tabs
-	---------------------------------------------------------------------------
 	local tabs = {}
 
 	local function styleTab(tab, on)
@@ -373,7 +353,64 @@ function Pages.new(ctx)
 		tab.scroll.Visible = on
 	end
 
-	local function selectTab(tab)
+	local originals = setmetatable({}, { __mode = "k" })
+
+	local function snapshot(child)
+		local items = prep(child)
+		for _, it in ipairs(items) do
+			local saved = originals[it[1]]
+			if not saved then
+				saved = {}
+				originals[it[1]] = saved
+			end
+			if saved[it[2]] == nil then
+				saved[it[2]] = it[3]
+			else
+				it[3] = saved[it[2]]
+			end
+		end
+		return items
+	end
+
+	local function animateIn(tab)
+		tab.animId = (tab.animId or 0) + 1
+		local id = tab.animId
+
+		local children = {}
+		for _, child in ipairs(tab.scroll:GetChildren()) do
+			if child:IsA("GuiObject") then
+				children[#children + 1] = child
+			end
+		end
+		table.sort(children, function(a, b)
+			return a.LayoutOrder < b.LayoutOrder
+		end)
+		if #children == 0 then
+			return
+		end
+
+		local lists = {}
+		for i, child in ipairs(children) do
+			local items = snapshot(child)
+			fade(items, 0)
+			lists[i] = items
+		end
+
+		tab.scroll.Position = UDim2.new(0, 0, 0, TAB_SLIDE)
+		tween(tab.scroll, TAB_IN_TIME + 0.08, { Position = UDim2.new(0, 0, 0, 0) }, Quint)
+
+		local step = math.min(TAB_STAGGER, TAB_STAGGER_MAX / #children)
+		for i, items in ipairs(lists) do
+			task.delay((i - 1) * step, function()
+				if tab.animId ~= id then
+					return
+				end
+				fade(items, 1, TAB_IN_TIME)
+			end)
+		end
+	end
+
+	local function selectTab(tab, animate)
 		if current == tab then
 			return
 		end
@@ -383,9 +420,11 @@ function Pages.new(ctx)
 		current = tab
 		styleTab(tab, true)
 		tab.refresh()
+		if animate ~= false and (opened or page.Visible) then
+			animateIn(tab)
+		end
 	end
 
-	-- OphynWindow({ Title = "...", Icon = "..." }) -> Tab
 	local function createTab(props)
 		if type(props) ~= "table" then
 			props = { Title = props }
@@ -395,7 +434,6 @@ function Pages.new(ctx)
 
 		local tab = {}
 
-		-- Tab button: the icon comes first, then the text
 		tab.btn = make("TextButton", {
 			Name = "Tab",
 			Size = UDim2.new(1, 0, 0, 30),
@@ -438,7 +476,6 @@ function Pages.new(ctx)
 			FontFace = FONT,
 		}, tab.btn)
 
-		-- The content of this Tab
 		tab.scroll = make("ScrollingFrame", {
 			Name = "TabContent",
 			Size = UDim2.new(1, 0, 1, 0),
@@ -490,10 +527,9 @@ function Pages.new(ctx)
 		tabs[#tabs + 1] = tab
 		nextBtn.Visible = true
 		if not current then
-			selectTab(tab)
+			selectTab(tab, false)
 		end
 
-		-- Tab:Section / Tab:Paragraph
 		local order = 0
 		local function nextOrder()
 			order = order + 1
@@ -507,14 +543,13 @@ function Pages.new(ctx)
 			return self
 		end
 
-		-- Tab:Section({ Title = "...", Icon = "..." }): the icon comes first, then the text
 		function obj:Section(p)
 			p = type(p) == "table" and p or {}
 			local sectionImage = assetId(p.Icon)
 
 			local row = make("Frame", {
 				Name = "Section",
-				Size = UDim2.new(1, 0, 0, 24),
+				Size = UDim2.new(1, 0, 0, 26),
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
 				LayoutOrder = nextOrder(),
@@ -536,8 +571,9 @@ function Pages.new(ctx)
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
 				Text = p.Title ~= nil and tostring(p.Title) or "Section",
-				TextSize = 13,
+				TextSize = SECTION_TEXT_SIZE,
 				TextColor3 = "text",
+				TextTransparency = SECTION_TEXT_TRANSPARENCY,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				TextYAlignment = Enum.TextYAlignment.Center,
 				TextTruncate = Enum.TextTruncate.AtEnd,
@@ -556,10 +592,9 @@ function Pages.new(ctx)
 			return section
 		end
 
-		-- Tab:Paragraph({ Title, Desc, Color, Buttons = { { Icon, Title, Callback } } })
 		function obj:Paragraph(p)
 			p = type(p) == "table" and p or {}
-			local color = parseColor(p.Color) -- nil: follows the theme
+			local color = parseColor(p.Color)
 			local onColor = color and contrastOn(color) or nil
 
 			local box = make("Frame", {
@@ -649,7 +684,6 @@ function Pages.new(ctx)
 							SortOrder = Enum.SortOrder.LayoutOrder,
 						}, btn)
 
-						-- icon first, then the text
 						local buttonImage = assetId(b.Icon)
 						if buttonImage then
 							local iconHolder = icon(btn, 0, 0, onColor or "text", buttonImage)
