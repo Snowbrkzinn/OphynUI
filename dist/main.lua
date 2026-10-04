@@ -1640,7 +1640,6 @@ function UI.new(options)
 		end
 	end
 	local SHOW_KEYLESS_CARD = KEYLESS and KL.showcard
-	local KEYLESS_KEY = "" -- what the Callback receives in keyless mode
 
 	-- With the Keyless card on, Discord starts collapsed so both cards fit
 	local DISCORD_STARTS_OPEN = SHOW_DISCORD_CARD and not SHOW_WEBSITE_CARD and HAS_DISCORD and not SHOW_KEYLESS_CARD
@@ -2586,32 +2585,37 @@ markTitleFont(hubTitle)
 
 	-- Expanded Information card: same look as the expanded Discord card
 	local INFO_OPEN_H = 92
-	local infoExtra = frame(infoCard, 0, 0, 147, INFO_OPEN_H)
-	infoExtra.Visible = false
+	-- Grouped in one table: UI.new is close to Lua's limit of 200 local variables.
+	local infoUI = {}
+	do
+		local extra = frame(infoCard, 0, 0, 147, INFO_OPEN_H)
+		extra.Visible = false
+		infoUI.extra = extra
 
-	local infoIconBox = frame(infoExtra, 9, 7, 26, 26, "input", 0)
-	round(infoIconBox, 8, "stroke")
-	icon(infoIconBox, 5, 5, "accent", Images.KEY)
+		local iconBox = frame(extra, 9, 7, 26, 26, "input", 0)
+		round(iconBox, 8, "stroke")
+		icon(iconBox, 5, 5, "accent", Images.KEY)
 
-	frame(infoExtra, 10, 41, 127, 1, "stroke", 0)
+		frame(extra, 10, 41, 127, 1, "stroke", 0)
 
-	local function infoStat(x, label, dotColor)
-		local num = text(infoExtra, "0", x, 46, 62, 16, 13, "text")
-		markBoldFont(num)
-		local dot = frame(infoExtra, x, 66, 6, 6, dotColor, 0)
-		make("UICorner", { CornerRadius = UDim.new(1, 0) }, dot)
-		text(infoExtra, label, x + 10, 62, 50, 14, 10, "muted")
-		return num
+		local function stat(x, label, dotColor)
+			local num = text(extra, "0", x, 46, 62, 16, 13, "text")
+			markBoldFont(num)
+			local dot = frame(extra, x, 66, 6, 6, dotColor, 0)
+			make("UICorner", { CornerRadius = UDim.new(1, 0) }, dot)
+			text(extra, label, x + 10, 62, 50, 14, 10, "muted")
+			return num
+		end
+		infoUI.valid = stat(12, "Valid", "success")
+		infoUI.expired = stat(80, "Expired", "warn")
+
+		text(extra, "Last used", 12, 77, 56, 13, 10, "muted")
+		local lastUsed = text(extra, "Never", 66, 77, 69, 13, 11, "text", Enum.TextXAlignment.Right)
+		lastUsed.TextTruncate = Enum.TextTruncate.AtEnd
+		infoUI.lastUsed = lastUsed
 	end
-	local validNum = infoStat(12, "Valid", "success")
-	local expiredNum = infoStat(80, "Expired", "warn")
-
-	text(infoExtra, "Last used", 12, 77, 56, 13, 10, "muted")
-	local lastUsedValue = text(infoExtra, "Never", 66, 77, 69, 13, 11, "text", Enum.TextXAlignment.Right)
-	lastUsedValue.TextTruncate = Enum.TextTruncate.AtEnd
-
-	local infoExtraItems = prep(infoExtra)
-	local infoIconItems = prep(infoIcon)
+	infoUI.extraItems = prep(infoUI.extra)
+	infoUI.iconItems = prep(infoIcon)
 
 	-- Keyless Mode card: informational only (no click)
 	local keylessCard = linkButton(206, "Keyless Mode", "No key needed", Images.KEYLESS)
@@ -3124,6 +3128,7 @@ markTitleFont(hubTitle)
 	-- Dragging the card list with the mouse (the wheel and touch scroll natively).
 	-- A drag never counts as a click on the card under the cursor.
 	local suppressClick = false
+	do
 	local dragging, dragStartY, dragStartCanvas = false, 0, 0
 	local function onPress(input)
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 or dragging or not state.ready then
@@ -3165,6 +3170,7 @@ markTitleFont(hubTitle)
 		dragMove:Disconnect()
 		dragEnd:Disconnect()
 	end)
+	end
 
 	local discordToken = 0
 
@@ -3259,12 +3265,13 @@ markTitleFont(hubTitle)
 	end)
 
 	local function refreshInfo()
-		validNum.Text = formatNumber(STATS.valid)
-		expiredNum.Text = formatNumber(STATS.expired)
-		lastUsedValue.Text = formatAgo(STATS.last)
+		infoUI.valid.Text = formatNumber(STATS.valid)
+		infoUI.expired.Text = formatNumber(STATS.expired)
+		infoUI.lastUsed.Text = formatAgo(STATS.last)
 	end
 	refreshInfo()
 
+	do
 	local function setLabelText(label, str)
 		if label.Text == str then
 			return
@@ -3306,21 +3313,21 @@ markTitleFont(hubTitle)
 		}, Quint)
 
 		fade(rowsItems, anyCardOpen() and 0 or 1, 0.25)
-		fade(infoIconItems, open and 0 or 1, 0.2)
+		fade(infoUI.iconItems, open and 0 or 1, 0.2)
 
 		if open then
-			infoExtra.Visible = true
-			fade(infoExtraItems, 0)
+			infoUI.extra.Visible = true
+			fade(infoUI.extraItems, 0)
 			task.delay(0.15, function()
 				if token == infoToken then
-					fade(infoExtraItems, 1, 0.3)
+					fade(infoUI.extraItems, 1, 0.3)
 				end
 			end)
 		else
-			fade(infoExtraItems, 0, 0.15)
+			fade(infoUI.extraItems, 0, 0.15)
 			task.delay(0.17, function()
 				if token == infoToken then
-					infoExtra.Visible = false
+					infoUI.extra.Visible = false
 				end
 			end)
 		end
@@ -3332,11 +3339,14 @@ markTitleFont(hubTitle)
 		end
 		setInfo(not infoOpen)
 	end)
+	end
 
 	local checkingKey = false
 
 	-- While a card is expanded the Executor/Status rows stay hidden, and the small
 	-- icon of the expanded card is replaced by its bigger one
+	local fadeContent
+	do
 	local rowsHidden, discordIconHidden, infoIconHidden = {}, {}, {}
 	for _, it in ipairs(rowsItems) do
 		rowsHidden[it[1]] = true
@@ -3344,11 +3354,11 @@ markTitleFont(hubTitle)
 	for _, it in ipairs(discordIconItems) do
 		discordIconHidden[it[1]] = true
 	end
-	for _, it in ipairs(infoIconItems) do
+	for _, it in ipairs(infoUI.iconItems) do
 		infoIconHidden[it[1]] = true
 	end
 
-	local function fadeContent(alpha, time)
+	function fadeContent(alpha, time)
 		if anyCardOpen() and alpha > 0 then
 			local filtered = {}
 			for _, it in ipairs(contentItems) do
@@ -3362,6 +3372,7 @@ markTitleFont(hubTitle)
 		else
 			fade(contentItems, alpha, time)
 		end
+	end
 	end
 
 	local function resetCheckScreen()
@@ -3602,7 +3613,7 @@ markTitleFont(hubTitle)
 		end
 
 		if KEYLESS then
-			runKeyCheck(KEYLESS_KEY)
+			runKeyCheck("") -- the Callback receives an empty key in keyless mode
 			return
 		end
 
@@ -3800,7 +3811,7 @@ markTitleFont(hubTitle)
 		if KEYLESS then
 			if KL.autoconfirm and not checkingKey then
 				task.wait(0.15)
-				runKeyCheck(KEYLESS_KEY)
+				runKeyCheck("") -- the Callback receives an empty key in keyless mode
 			end
 		elseif SAVED_KEY and not checkingKey then
 			keyBox.Text = SAVED_KEY
