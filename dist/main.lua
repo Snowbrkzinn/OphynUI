@@ -753,6 +753,11 @@ __modules["components/window/pages"] = function()
 --
 --   Tab:Section({ Title = "Section", Icon = "rbxassetid://..." })
 --
+--   -- Every Icon also accepts a Lucide icon name (https://lucide.dev/icons), loaded from
+--   -- github.com/Footagesus/Icons the first time one is used:
+--   local Tab = OphynWindow({ Title = "Main", Icon = "house" })
+--   Tab:Section({ Title = "Section", Icon = "lucide:settings" })
+--
 --   Tab:Paragraph({
 --       Title = "Paragraph",
 --       Desc = "Test Paragraph",
@@ -814,6 +819,21 @@ function Pages.new(ctx)
 	local SIDE_W = 124
 	local SLIDE_TIME = 0.55
 	local Quint = Enum.EasingStyle.Quint
+
+	-- Section title look: a bit bigger than before and slightly see-through
+	local SECTION_TEXT_SIZE = 15
+	local SECTION_TEXT_TRANSPARENCY = 0.35
+
+	-- Switching Tabs: the content rises a few pixels while its elements fade in one after
+	-- the other (the stagger is capped so a Tab with many elements doesn't feel slow)
+	local TAB_SLIDE = 10
+	local TAB_IN_TIME = 0.32
+	local TAB_STAGGER = 0.045
+	local TAB_STAGGER_MAX = 0.4
+
+	-- The "show the Tabs" arrow reuses the Submit button's icon. If that icon points right,
+	-- 90 turns it to point down; change this if the arrow ends up facing the wrong way.
+	local NEXT_ARROW_ROTATION = 90
 
 	-- false when "Change icons color" is off: icons stay white and are never recolored
 	local tintIcons = type(iconRole("muted")) == "string"
@@ -1072,15 +1092,24 @@ function Pages.new(ctx)
 		Visible = false,
 		ZIndex = 5,
 	}, content)
-	local nextChevron, nextBars = chevron(nextBtn, true, "muted", 1.1)
-	nextChevron.AnchorPoint = Vector2.new(0.5, 0.5)
-	nextChevron.Position = UDim2.new(0.5, 0, 0.5, 2)
+	-- Same icon as the Submit button (Images.SUBMIT), turned to point down
+	local nextIcon = icon(nextBtn, 0, 0, "muted", Images.SUBMIT)
+	nextIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	nextIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
+	nextIcon.Rotation = NEXT_ARROW_ROTATION
+	local nextIconImage = nextIcon:FindFirstChild("iconimage")
+
+	local function tintNext(color)
+		if tintIcons and nextIconImage then
+			tween(nextIconImage, 0.15, { ImageColor3 = color })
+		end
+	end
 
 	nextBtn.MouseEnter:Connect(function()
-		tintBars(nextBars, C.text)
+		tintNext(C.text)
 	end)
 	nextBtn.MouseLeave:Connect(function()
-		tintBars(nextBars, C.muted)
+		tintNext(C.muted)
 	end)
 	nextBtn.MouseButton1Click:Connect(function()
 		if not state.ready or state.closing then
@@ -1117,7 +1146,69 @@ function Pages.new(ctx)
 		tab.scroll.Visible = on
 	end
 
-	local function selectTab(tab)
+	-- originals[inst][prop] = the resting transparency of that property, captured only once.
+	-- Switching Tabs quickly (while an animation is still running) then never records a
+	-- half-faded value as the "normal" one.
+	local originals = setmetatable({}, { __mode = "k" })
+
+	local function snapshot(child)
+		local items = prep(child)
+		for _, it in ipairs(items) do
+			local saved = originals[it[1]]
+			if not saved then
+				saved = {}
+				originals[it[1]] = saved
+			end
+			if saved[it[2]] == nil then
+				saved[it[2]] = it[3]
+			else
+				it[3] = saved[it[2]]
+			end
+		end
+		return items
+	end
+
+	-- Plays when a Tab becomes the selected one: the whole content rises a little and
+	-- every element (Section / Paragraph) fades in, one after the other.
+	local function animateIn(tab)
+		tab.animId = (tab.animId or 0) + 1
+		local id = tab.animId
+
+		local children = {}
+		for _, child in ipairs(tab.scroll:GetChildren()) do
+			if child:IsA("GuiObject") then
+				children[#children + 1] = child
+			end
+		end
+		table.sort(children, function(a, b)
+			return a.LayoutOrder < b.LayoutOrder
+		end)
+		if #children == 0 then
+			return
+		end
+
+		local lists = {}
+		for i, child in ipairs(children) do
+			local items = snapshot(child)
+			fade(items, 0) -- start fully transparent
+			lists[i] = items
+		end
+
+		tab.scroll.Position = UDim2.new(0, 0, 0, TAB_SLIDE)
+		tween(tab.scroll, TAB_IN_TIME + 0.08, { Position = UDim2.new(0, 0, 0, 0) }, Quint)
+
+		local step = math.min(TAB_STAGGER, TAB_STAGGER_MAX / #children)
+		for i, items in ipairs(lists) do
+			task.delay((i - 1) * step, function()
+				if tab.animId ~= id then
+					return -- a newer animation took over this Tab
+				end
+				fade(items, 1, TAB_IN_TIME)
+			end)
+		end
+	end
+
+	local function selectTab(tab, animate)
 		if current == tab then
 			return
 		end
@@ -1127,6 +1218,9 @@ function Pages.new(ctx)
 		current = tab
 		styleTab(tab, true)
 		tab.refresh()
+		if animate ~= false and (opened or page.Visible) then
+			animateIn(tab)
+		end
 	end
 
 	-- OphynWindow({ Title = "...", Icon = "..." }) -> Tab
@@ -1234,7 +1328,7 @@ function Pages.new(ctx)
 		tabs[#tabs + 1] = tab
 		nextBtn.Visible = true
 		if not current then
-			selectTab(tab)
+			selectTab(tab, false)
 		end
 
 		-- Tab:Section / Tab:Paragraph
@@ -1258,7 +1352,7 @@ function Pages.new(ctx)
 
 			local row = make("Frame", {
 				Name = "Section",
-				Size = UDim2.new(1, 0, 0, 24),
+				Size = UDim2.new(1, 0, 0, 26),
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
 				LayoutOrder = nextOrder(),
@@ -1280,8 +1374,9 @@ function Pages.new(ctx)
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
 				Text = p.Title ~= nil and tostring(p.Title) or "Section",
-				TextSize = 13,
+				TextSize = SECTION_TEXT_SIZE,
 				TextColor3 = "text",
+				TextTransparency = SECTION_TEXT_TRANSPARENCY,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				TextYAlignment = Enum.TextYAlignment.Center,
 				TextTruncate = Enum.TextTruncate.AtEnd,
@@ -1491,6 +1586,7 @@ local Jnkie = import("utilities/jnkie")
 local Platoboost = import("utilities/platoboost")
 local Panda = import("utilities/panda")
 local Pages = import("components/window/pages")
+local Lucide = import("utilities/lucide")
 
 local FONT = Font.new(Images.FONT, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 local FONT_BOLD = Font.new(Images.FONT, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
@@ -2046,13 +2142,14 @@ local function icon(parent, x, y, color, image)
 		ImageTransparency = 0.9,
 		ZIndex = 0,
 	}, holder)
-	make("ImageLabel", {
+	local img = make("ImageLabel", {
 		Name = "iconimage",
 		Size = UDim2.new(1, 0, 1, 0),
 		BackgroundTransparency = 1,
-		Image = image,
 		ImageColor3 = iconRole(color),
 	}, holder)
+	-- `image` can be an asset id or a Lucide icon name ("house" / "lucide:house")
+	Lucide.apply(img, image)
 	return holder
 end
 
@@ -3151,7 +3248,7 @@ markTitleFont(hubTitle)
 		getKey.Text = (title and title ~= "") and title or "Get a key"
 		local image = getKeyIcon:FindFirstChild("iconimage")
 		if image then
-			image.Image = assetId(iconValue) or assetId(getkeySettings.icon) or Images.KEY
+			Lucide.apply(image, assetId(iconValue) or assetId(getkeySettings.icon) or Images.KEY)
 		end
 		local showArrow = #getMethods > 1
 		methodArrow.Visible = showArrow
@@ -4796,6 +4893,192 @@ function Jnkie:Validator()
 end
 
 return Jnkie
+end
+
+__modules["utilities/lucide"] = function()
+-- src/utilities/lucide.lua
+-- Lucide icon support, backed by https://github.com/Footagesus/Icons (lucide/dist/Icons.lua).
+--
+-- Anywhere the UI takes an `Icon`, you can now pass a Lucide name instead of an asset id:
+--
+--   Tab:Section({ Title = "Main", Icon = "house" })
+--   Tab:Section({ Title = "Main", Icon = "lucide:house" }) -- same thing, explicit prefix
+--
+-- Asset ids ("rbxassetid://...", a bare number, "rbxthumb://...") keep working exactly as before.
+--
+-- The icon pack is a spritesheet: every icon is a rect inside a bigger image, so a resolved
+-- icon is { Image, RectSize, RectOffset } and not just one asset id. The pack is only
+-- downloaded the first time a Lucide name is actually used (and cached after that), so
+-- scripts that only use asset ids never pay for it.
+
+local Lucide = {}
+
+local PACK_URL = "https://raw.githubusercontent.com/Footagesus/Icons/refs/heads/main/lucide/dist/Icons.lua"
+local PREFIX = "lucide:"
+
+local pack = nil -- the loaded icon pack
+local failed = false -- the download/parse failed, don't keep retrying
+local loading = false
+local preloaded = {} -- spritesheets that already went through ContentProvider
+local warned = {} -- names that already printed a warning
+
+local function fetch(url)
+	local ok, body = pcall(function()
+		return game:HttpGet(url)
+	end)
+	if ok and type(body) == "string" and body ~= "" then
+		return body
+	end
+	ok, body = pcall(function()
+		return game:HttpGetAsync(url)
+	end)
+	if ok and type(body) == "string" and body ~= "" then
+		return body
+	end
+	return nil
+end
+
+local function loadPack()
+	if pack or failed then
+		return pack
+	end
+	if loading then
+		-- another thread is already downloading it: wait for that one
+		while loading do
+			task.wait()
+		end
+		return pack
+	end
+
+	loading = true
+	local ok, result = pcall(function()
+		local body = fetch(PACK_URL)
+		if not body then
+			error("could not download the icon pack")
+		end
+		local chunk, err = loadstring(body)
+		if not chunk then
+			error(err)
+		end
+		return chunk()
+	end)
+	loading = false
+
+	if ok and type(result) == "table" then
+		pack = result
+	else
+		failed = true
+		warn("[Ophyn] Lucide icons unavailable: " .. tostring(result))
+	end
+	return pack
+end
+
+-- "rbxassetid://123" / 123 / "123" -> "rbxassetid://123"; anything else string-like is kept
+local function toAsset(value)
+	if type(value) == "number" then
+		return "rbxassetid://" .. tostring(math.floor(value))
+	end
+	if type(value) == "string" and value:match("^%d+$") then
+		return "rbxassetid://" .. value
+	end
+	return value
+end
+
+-- true when `value` should be looked up in the Lucide pack (instead of used as an asset id)
+function Lucide.isName(value)
+	if type(value) ~= "string" or value == "" then
+		return false
+	end
+	if value:match("^%d+$") then
+		return false -- bare asset id
+	end
+	if value:match("^rbx%a*://") or value:match("^https?://") then
+		return false -- rbxassetid:// / rbxthumb:// / rbxasset:// / urls
+	end
+	return true
+end
+
+local function stripPrefix(name)
+	if name:sub(1, #PREFIX):lower() == PREFIX then
+		return name:sub(#PREFIX + 1)
+	end
+	return name
+end
+
+local function preload(sheet)
+	if preloaded[sheet] then
+		return
+	end
+	preloaded[sheet] = true
+	task.spawn(function()
+		pcall(function()
+			game:GetService("ContentProvider"):PreloadAsync({ sheet })
+		end)
+	end)
+end
+
+-- Returns { Image = "rbxassetid://...", RectSize = Vector2, RectOffset = Vector2 }
+-- or nil when the name is unknown (or the pack could not be loaded).
+function Lucide.resolve(value)
+	if not Lucide.isName(value) then
+		return nil
+	end
+
+	local name = stripPrefix(value):lower():gsub("_", "-")
+	local loaded = loadPack()
+	if not loaded then
+		return nil
+	end
+
+	local icons = loaded.Icons or loaded
+	local entry = type(icons) == "table" and icons[name] or nil
+	if type(entry) ~= "table" then
+		if not warned[name] then
+			warned[name] = true
+			warn('[Ophyn] unknown Lucide icon "' .. tostring(value) .. '"')
+		end
+		return nil
+	end
+
+	local sheet = entry.Image
+	if type(loaded.Spritesheets) == "table" and loaded.Spritesheets[tostring(entry.Image)] ~= nil then
+		sheet = loaded.Spritesheets[tostring(entry.Image)]
+	end
+	sheet = toAsset(sheet)
+	if type(sheet) ~= "string" then
+		return nil
+	end
+
+	preload(sheet)
+	return {
+		Image = sheet,
+		RectSize = entry.ImageRectSize or Vector2.new(0, 0),
+		RectOffset = entry.ImageRectPosition or entry.ImageRectOffset or Vector2.new(0, 0),
+	}
+end
+
+-- Points an ImageLabel/ImageButton at `value`, which can be a Lucide name or an asset id.
+-- Always resets the sprite rect, so an icon can be swapped between the two kinds safely.
+function Lucide.apply(label, value)
+	local sprite = Lucide.resolve(value)
+	if sprite then
+		label.Image = sprite.Image
+		label.ImageRectSize = sprite.RectSize
+		label.ImageRectOffset = sprite.RectOffset
+		return true
+	end
+
+	label.ImageRectSize = Vector2.new(0, 0)
+	label.ImageRectOffset = Vector2.new(0, 0)
+	if Lucide.isName(value) then
+		label.Image = "" -- a Lucide name that could not be resolved: draw nothing
+		return false
+	end
+	label.Image = value or ""
+	return value ~= nil
+end
+
+return Lucide
 end
 
 __modules["utilities/panda"] = function()
