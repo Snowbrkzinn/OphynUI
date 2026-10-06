@@ -1,7 +1,3 @@
--- src/components/window/pages.lua
--- yeah, cool.
-
-local Pages = {}
 
 local NAMED_COLORS = {
 	red = Color3.fromRGB(229, 57, 53),
@@ -412,7 +408,6 @@ function Pages.new(ctx)
 	---------------------------------------------------------------------------
 	local function styleTab(tab, on)
 		tween(tab.btn, 0.15, { BackgroundTransparency = on and 0 or 1 })
-		tween(tab.bar, 0.15, { BackgroundTransparency = on and 0 or 1 })
 		setRole(tab.label, "TextColor3", on and "text" or "muted")
 		if tab.iconImage then
 			local role = iconRole(on and "accent" or "muted")
@@ -512,7 +507,7 @@ function Pages.new(ctx)
 
 		-- Tab button: the icon comes first, then the text. The icon + text live in `inner`
 		-- (it holds the layout and the side padding, so the button can size itself to the
-		-- text in style 2); the active-tab bar sits on the button itself.
+		-- text in style 2).
 		tab.btn = make("TextButton", {
 			Name = "Tab",
 			Size = UDim2.new(1, 0, 0, 30),
@@ -524,15 +519,6 @@ function Pages.new(ctx)
 			LayoutOrder = #tabs + 1,
 		}, sidebar)
 		round(tab.btn, 7)
-
-		tab.bar = make("Frame", {
-			Position = UDim2.new(0, 2, 0.5, -8),
-			Size = UDim2.new(0, 3, 0, 16),
-			BackgroundColor3 = "accent",
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-		}, tab.btn)
-		make("UICorner", { CornerRadius = UDim.new(1, 0) }, tab.bar)
 
 		tab.inner = make("Frame", {
 			Name = "Inner",
@@ -579,9 +565,6 @@ function Pages.new(ctx)
 				tab.pad.PaddingRight = UDim.new(0, 12)
 				tab.label.Size = UDim2.new(0, 0, 1, 0)
 				tab.label.AutomaticSize = Enum.AutomaticSize.X
-				tab.bar.AnchorPoint = Vector2.new(0.5, 1)
-				tab.bar.Position = UDim2.new(0.5, 0, 1, -2)
-				tab.bar.Size = UDim2.new(1, -16, 0, 2)
 			else
 				tab.btn.AutomaticSize = Enum.AutomaticSize.None
 				tab.btn.Size = UDim2.new(1, 0, 0, 30)
@@ -591,9 +574,6 @@ function Pages.new(ctx)
 				tab.pad.PaddingRight = UDim.new(0, 8)
 				tab.label.AutomaticSize = Enum.AutomaticSize.None
 				tab.label.Size = UDim2.new(1, image and -22 or 0, 1, 0)
-				tab.bar.AnchorPoint = Vector2.new(0, 0)
-				tab.bar.Position = UDim2.new(0, 2, 0.5, -8)
-				tab.bar.Size = UDim2.new(0, 3, 0, 16)
 			end
 		end
 		tab.applyStyle()
@@ -895,7 +875,18 @@ function Pages.new(ctx)
 			if not page.Parent then
 				return false
 			end
-			local style = normalizeStyle(ctx.getTabsStyle and ctx.getTabsStyle())
+			local style = normalizeStyle(ctx.getTabsStyle and ctx.getTabsStyle())s/Icons the first time one is used:
+--   local Tab = OphynWindow({ Title = "Main", Icon = "house" })
+--   Tab:Section({ Title = "Section", Icon = "lucide:settings" })
+--
+--   Tab:Paragraph({
+--       Title = "Paragraph",
+--       Desc = "Test Paragraph",
+--       Color = "Red", -- leave it blank to follow the theme
+--       Buttons = { { Icon = "rbxassetid://...", Title = "Button 1", Callback = function() end } },
+--   })
+
+
 			if style ~= tabsStyle then
 				tabsStyle = style
 				applyTabsStyle()
