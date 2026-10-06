@@ -1179,7 +1179,6 @@ function Pages.new(ctx)
 	---------------------------------------------------------------------------
 	local function styleTab(tab, on)
 		tween(tab.btn, 0.15, { BackgroundTransparency = on and 0 or 1 })
-		tween(tab.bar, 0.15, { BackgroundTransparency = on and 0 or 1 })
 		setRole(tab.label, "TextColor3", on and "text" or "muted")
 		if tab.iconImage then
 			local role = iconRole(on and "accent" or "muted")
@@ -1279,7 +1278,7 @@ function Pages.new(ctx)
 
 		-- Tab button: the icon comes first, then the text. The icon + text live in `inner`
 		-- (it holds the layout and the side padding, so the button can size itself to the
-		-- text in style 2); the active-tab bar sits on the button itself.
+		-- text in style 2).
 		tab.btn = make("TextButton", {
 			Name = "Tab",
 			Size = UDim2.new(1, 0, 0, 30),
@@ -1291,15 +1290,6 @@ function Pages.new(ctx)
 			LayoutOrder = #tabs + 1,
 		}, sidebar)
 		round(tab.btn, 7)
-
-		tab.bar = make("Frame", {
-			Position = UDim2.new(0, 2, 0.5, -8),
-			Size = UDim2.new(0, 3, 0, 16),
-			BackgroundColor3 = "accent",
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-		}, tab.btn)
-		make("UICorner", { CornerRadius = UDim.new(1, 0) }, tab.bar)
 
 		tab.inner = make("Frame", {
 			Name = "Inner",
@@ -1346,9 +1336,6 @@ function Pages.new(ctx)
 				tab.pad.PaddingRight = UDim.new(0, 12)
 				tab.label.Size = UDim2.new(0, 0, 1, 0)
 				tab.label.AutomaticSize = Enum.AutomaticSize.X
-				tab.bar.AnchorPoint = Vector2.new(0.5, 1)
-				tab.bar.Position = UDim2.new(0.5, 0, 1, -2)
-				tab.bar.Size = UDim2.new(1, -16, 0, 2)
 			else
 				tab.btn.AutomaticSize = Enum.AutomaticSize.None
 				tab.btn.Size = UDim2.new(1, 0, 0, 30)
@@ -1358,9 +1345,6 @@ function Pages.new(ctx)
 				tab.pad.PaddingRight = UDim.new(0, 8)
 				tab.label.AutomaticSize = Enum.AutomaticSize.None
 				tab.label.Size = UDim2.new(1, image and -22 or 0, 1, 0)
-				tab.bar.AnchorPoint = Vector2.new(0, 0)
-				tab.bar.Position = UDim2.new(0, 2, 0.5, -8)
-				tab.bar.Size = UDim2.new(0, 3, 0, 16)
 			end
 		end
 		tab.applyStyle()
@@ -3624,7 +3608,7 @@ markTitleFont(hubTitle)
 	local moonIcon = make("ImageLabel", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0.5, 0, 0.5, 0),
-		Size = UDim2.new(0, 12, 0, 12),
+		Size = UDim2.new(0, 10, 0, 10),
 		BackgroundTransparency = 1,
 		Image = MOON_ICON,
 		ImageColor3 = iconRole("muted"),
@@ -5710,7 +5694,7 @@ return {
 	-- Themes Config
 	Changelogocolor = true,
 	Changeiconscolor = true,
-	ChangeTheme = true, -- false: hides the moon (theme switch) icon
+	ChangeTheme = "true", -- "false": disable moon icon to change Theme
 
 	-- Section Config
 	discord_link = "",
