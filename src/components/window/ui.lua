@@ -1936,7 +1936,7 @@ markTitleFont(hubTitle)
 	local moonIcon = make("ImageLabel", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0.5, 0, 0.5, 0),
-		Size = UDim2.new(0, 12, 0, 12),
+		Size = UDim2.new(0, 10, 0, 10),
 		BackgroundTransparency = 1,
 		Image = MOON_ICON,
 		ImageColor3 = iconRole("muted"),
