@@ -18,7 +18,7 @@ return {
 	-- Themes Config
 	Changelogocolor = true,
 	Changeiconscolor = true,
-	ChangeTheme = true, -- false: hides the moon (theme switch) icon
+	ChangeTheme = "true", -- "false": disable moon icon to change Theme
 
 	-- Section Config
 	discord_link = "",
@@ -29,8 +29,20 @@ return {
 	Website = "false",
 	Informations = "true",
 
+	-- Keyless mode: no key needed. Status becomes "Keyless" and Submit runs the Callback directly.
+	Keyless = {
+		enabled = false, -- true: turns keyless mode on
+		disabletextbox = true, -- dims the key box and blocks typing
+		disablegetkey = true, -- dims "Get a key" and blocks clicks
+		showcard = true, -- shows the "Keyless Mode" card
+		autoconfirm = false, -- true: runs the Callback automatically when the UI opens
+	},
+
 	-- Notification style
 	NotifStyle = "1",
+
+	-- Tabs style: "1" = Tabs in a column on the left, "2" = Tabs in a row under the topbar
+	TabsStyle = "1",
 
 	-- Games
 	SupportedGames = {},

@@ -741,10 +741,939 @@ end
 return Notification
 end
 
+__modules["components/window/pages"] = function()
+-- src/components/window/pages.lua
+-- Page 2 of the window. It sits right below the Key System: a down arrow at the bottom
+-- of the Key System slides the Key System up and brings this page in (a topbar, the Tabs
+-- under it, and the content of the selected Tab: Sections and Paragraphs).
+--
+--   local OphynWindow = KeySystem.new({ ... })
+--
+--   local Tab = OphynWindow({ Title = "Main", Icon = "rbxassetid://..." })
+--
+--   Tab:Section({ Title = "Section", Icon = "rbxassetid://..." })
+--
+--   -- Tabs style: KeySystem:SetTabsStyle("1") = column on the left (default),
+--   --             KeySystem:SetTabsStyle("2") = row right under the topbar.
+--
+--   -- Every Icon also accepts a Lucide icon name (https://lucide.dev/icons), loaded from
+--   -- github.com/Footagesus/Icons the first time one is used:
+--   local Tab = OphynWindow({ Title = "Main", Icon = "house" })
+--   Tab:Section({ Title = "Section", Icon = "lucide:settings" })
+--
+--   Tab:Paragraph({
+--       Title = "Paragraph",
+--       Desc = "Test Paragraph",
+--       Color = "Red", -- leave it blank to follow the theme
+--       Buttons = { { Icon = "rbxassetid://...", Title = "Button 1", Callback = function() end } },
+--   })
+
+local Pages = {}
+
+local NAMED_COLORS = {
+	red = Color3.fromRGB(229, 57, 53),
+	orange = Color3.fromRGB(245, 124, 0),
+	yellow = Color3.fromRGB(250, 204, 21),
+	green = Color3.fromRGB(34, 160, 80),
+	teal = Color3.fromRGB(20, 160, 150),
+	cyan = Color3.fromRGB(6, 182, 212),
+	blue = Color3.fromRGB(59, 130, 246),
+	indigo = Color3.fromRGB(99, 102, 241),
+	purple = Color3.fromRGB(147, 51, 234),
+	pink = Color3.fromRGB(236, 72, 153),
+	grey = Color3.fromRGB(100, 100, 108),
+	gray = Color3.fromRGB(100, 100, 108),
+	white = Color3.fromRGB(245, 245, 245),
+	black = Color3.fromRGB(16, 16, 16),
+}
+
+-- Accepts a Color3, a color name ("Red", "Blue", ...) or a hex string ("#RRGGBB").
+-- Returns nil for anything else, which makes the Paragraph follow the theme.
+local function parseColor(value)
+	if value == nil or value == "" then
+		return nil
+	end
+	if typeof(value) == "Color3" then
+		return value
+	end
+	if type(value) == "string" then
+		local named = NAMED_COLORS[value:lower()]
+		if named then
+			return named
+		end
+		local hex = value:match("^#?(%x%x%x%x%x%x)$")
+		if hex then
+			return Color3.fromHex(hex)
+		end
+	end
+	return nil
+end
+
+function Pages.new(ctx)
+	local C, make, round = ctx.C, ctx.make, ctx.round
+	local tween, prep, fade = ctx.tween, ctx.prep, ctx.fade
+	local setRole, icon, assetId = ctx.setRole, ctx.icon, ctx.assetId
+	local contrastOn, iconRole, logoRole = ctx.contrastOn, ctx.iconRole, ctx.logoRole
+	local FONT, FONT_BOLD, Images = ctx.FONT, ctx.FONT_BOLD, ctx.images
+	local state, content, canvas = ctx.state, ctx.content, ctx.canvas
+	local W, H = ctx.width, ctx.height
+
+	local TOPBAR_H = 38
+	local SIDE_W = 124
+	local SLIDE_TIME = 0.55
+	local Quint = Enum.EasingStyle.Quint
+
+	-- Section title look: a bit bigger than before and slightly see-through
+	local SECTION_TEXT_SIZE = 15
+	local SECTION_TEXT_TRANSPARENCY = 0.35
+
+	-- Switching Tabs: the content rises a few pixels while its elements fade in one after
+	-- the other (the stagger is capped so a Tab with many elements doesn't feel slow)
+	local TAB_SLIDE = 10
+	local TAB_IN_TIME = 0.32
+	local TAB_STAGGER = 0.045
+	local TAB_STAGGER_MAX = 0.4
+
+	-- Both arrows (down: show the Tabs / up: back to the Key System) reuse the Submit
+	-- button's icon. If that icon points right, 90 turns it to point down and -90 up;
+	-- change this if the arrows end up facing the wrong way.
+	local NEXT_ARROW_ROTATION = 90
+	local BACK_ARROW_ROTATION = -NEXT_ARROW_ROTATION
+
+	-- Tabs style 2 (a row under the topbar)
+	local TABS_BAR_H = 34
+	local TAB_H_STYLE2 = 26
+
+	-- false when "Change icons color" is off: icons stay white and are never recolored
+	local tintIcons = type(iconRole("muted")) == "string"
+
+	-- The arrows: the Submit button's icon in one single ImageLabel, rotated on the label
+	-- itself (not on a parent frame) and placed with plain offsets, so it renders right
+	-- from the first frame. `drop` pushes it down a few pixels inside its button.
+	local function arrowIcon(parent, rotation, drop)
+		local img = make("ImageLabel", {
+			Name = "ArrowIcon",
+			Position = UDim2.new(0.5, -8, 0.5, -8 + (drop or 0)),
+			Size = UDim2.new(0, 16, 0, 16),
+			BackgroundTransparency = 1,
+			Image = Images.SUBMIT,
+			ImageColor3 = iconRole("muted"),
+			Rotation = rotation,
+			ZIndex = 6,
+		}, parent)
+		task.spawn(function()
+			pcall(function()
+				game:GetService("ContentProvider"):PreloadAsync({ img })
+			end)
+		end)
+		return img
+	end
+
+	local function tintArrow(img, color)
+		if tintIcons then
+			tween(img, 0.15, { ImageColor3 = color })
+		end
+	end
+
+	local function line(parent, x, y, w, h)
+		return make("Frame", {
+			Position = UDim2.new(0, x, 0, y),
+			Size = UDim2.new(0, w, 0, h),
+			BackgroundColor3 = "stroke",
+			BackgroundTransparency = 0,
+			BorderSizePixel = 0,
+		}, parent)
+	end
+
+	---------------------------------------------------------------------------
+	-- The page itself: starts one window-height below, hidden
+	---------------------------------------------------------------------------
+	local page = make("Frame", {
+		Name = "Page2",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, H),
+		Size = UDim2.new(0, W, 0, H),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Visible = false,
+	}, canvas)
+
+	-- Topbar: logo + title on the left, back arrow + close on the right
+	local topbar = make("Frame", {
+		Name = "Topbar",
+		Size = UDim2.new(0, W, 0, TOPBAR_H),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, page)
+
+	make("ImageLabel", {
+		Position = UDim2.new(0, 14, 0, 9),
+		Size = UDim2.new(0, 24, 0, 20),
+		BackgroundTransparency = 1,
+		Image = ctx.logo,
+		ImageColor3 = logoRole("accent"),
+		ScaleType = Enum.ScaleType.Fit,
+	}, topbar)
+
+	local pageTitle = make("TextLabel", {
+		Position = UDim2.new(0, 46, 0, 0),
+		Size = UDim2.new(0, W - 46 - 84, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Text = ctx.title,
+		TextSize = 14,
+		TextColor3 = "text",
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Center,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		FontFace = FONT_BOLD,
+	}, topbar)
+	ctx.markTitleFont(pageTitle)
+
+	local function topButton(rightOffset)
+		local btn = make("TextButton", {
+			Name = "TopButton",
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, -rightOffset, 0, 6),
+			Size = UDim2.new(0, 26, 0, 26),
+			BackgroundColor3 = "card",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			AutoButtonColor = false,
+			Text = "",
+			ZIndex = 5,
+		}, topbar)
+		make("UICorner", { CornerRadius = UDim.new(0, 7) }, btn)
+		return btn
+	end
+
+	local closeBtn = topButton(12)
+	local closeIcon = make("ImageLabel", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		Size = UDim2.new(0, 12, 0, 12),
+		BackgroundTransparency = 1,
+		Image = Images.CLOSE_ICON,
+		ImageColor3 = iconRole("muted"),
+		ZIndex = 6,
+	}, closeBtn)
+
+	local backBtn = topButton(40)
+	local backIcon = arrowIcon(backBtn, BACK_ARROW_ROTATION, 0)
+
+	closeBtn.MouseEnter:Connect(function()
+		tween(closeBtn, 0.15, { BackgroundTransparency = 0 })
+		if tintIcons then
+			tween(closeIcon, 0.15, { ImageColor3 = C.text })
+		end
+	end)
+	closeBtn.MouseLeave:Connect(function()
+		tween(closeBtn, 0.15, { BackgroundTransparency = 1 })
+		if tintIcons then
+			tween(closeIcon, 0.15, { ImageColor3 = C.muted })
+		end
+	end)
+	backBtn.MouseEnter:Connect(function()
+		tween(backBtn, 0.15, { BackgroundTransparency = 0 })
+		tintArrow(backIcon, C.text)
+	end)
+	backBtn.MouseLeave:Connect(function()
+		tween(backBtn, 0.15, { BackgroundTransparency = 1 })
+		tintArrow(backIcon, C.muted)
+	end)
+
+	-- Tabs style: "1" = column on the left, "2" = row right under the topbar
+	local tabsStyle = "1"
+	local function normalizeStyle(value)
+		value = tostring(value or "1"):lower()
+		if value == "2" or value == "horizontal" or value == "row" then
+			return "2"
+		end
+		return "1"
+	end
+	if ctx.getTabsStyle then
+		tabsStyle = normalizeStyle(ctx.getTabsStyle())
+	end
+
+	-- Style 1 draws the line under the topbar; style 2 draws it under the row of Tabs
+	local topLine = line(page, 14, TOPBAR_H, W - 28, 1)
+	local tabsLine = line(page, 14, TOPBAR_H + TABS_BAR_H, W - 28, 1)
+	local sideLine = line(page, SIDE_W, TOPBAR_H + 10, 1, H - TOPBAR_H - 20)
+
+	-- Tabs (a column in style 1, a row in style 2)
+	local sidebar = make("ScrollingFrame", {
+		Name = "Tabs",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		ElasticBehavior = Enum.ElasticBehavior.Never,
+		ScrollBarThickness = 0,
+	}, page)
+	local sideLayout = make("UIListLayout", {
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, sidebar)
+	local sidePadding = make("UIPadding", {}, sidebar)
+
+	-- Where the selected Tab's content shows up
+	local holder = make("Frame", {
+		Name = "TabContent",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+	}, page)
+
+	-- mouse wheel scrolls the row sideways in style 2
+	sidebar.InputChanged:Connect(function(input)
+		if tabsStyle == "2" and input.UserInputType == Enum.UserInputType.MouseWheel then
+			local maxX = math.max(0, sidebar.AbsoluteCanvasSize.X - sidebar.AbsoluteWindowSize.X)
+			local x = sidebar.CanvasPosition.X - input.Position.Z * 30
+			sidebar.CanvasPosition = Vector2.new(math.clamp(x, 0, maxX), 0)
+		end
+	end)
+
+	local tabs = {}
+	local current = nil
+
+	local function applyTabsStyle()
+		local row = tabsStyle == "2"
+
+		topLine.Visible = not row
+		sideLine.Visible = not row
+		tabsLine.Visible = row
+
+		sidebar.CanvasPosition = Vector2.new(0, 0)
+		sidebar.AutomaticCanvasSize = Enum.AutomaticSize.None
+		sidebar.CanvasSize = UDim2.new(0, 0, 0, 0)
+		if row then
+			sidebar.Position = UDim2.new(0, 0, 0, TOPBAR_H)
+			sidebar.Size = UDim2.new(0, W, 0, TABS_BAR_H)
+			sidebar.ScrollingDirection = Enum.ScrollingDirection.X
+			sidebar.AutomaticCanvasSize = Enum.AutomaticSize.X
+			sideLayout.FillDirection = Enum.FillDirection.Horizontal
+			sideLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+			sidePadding.PaddingTop = UDim.new(0, 0)
+			sidePadding.PaddingBottom = UDim.new(0, 0)
+			sidePadding.PaddingLeft = UDim.new(0, 12)
+			sidePadding.PaddingRight = UDim.new(0, 12)
+
+			holder.Position = UDim2.new(0, 0, 0, TOPBAR_H + TABS_BAR_H + 1)
+			holder.Size = UDim2.new(0, W, 0, H - TOPBAR_H - TABS_BAR_H - 1)
+		else
+			sidebar.Position = UDim2.new(0, 0, 0, TOPBAR_H + 1)
+			sidebar.Size = UDim2.new(0, SIDE_W, 0, H - TOPBAR_H - 1)
+			sidebar.ScrollingDirection = Enum.ScrollingDirection.Y
+			sidebar.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			sideLayout.FillDirection = Enum.FillDirection.Vertical
+			sideLayout.VerticalAlignment = Enum.VerticalAlignment.Top
+			sidePadding.PaddingTop = UDim.new(0, 10)
+			sidePadding.PaddingBottom = UDim.new(0, 10)
+			sidePadding.PaddingLeft = UDim.new(0, 10)
+			sidePadding.PaddingRight = UDim.new(0, 10)
+
+			holder.Position = UDim2.new(0, SIDE_W + 1, 0, TOPBAR_H + 1)
+			holder.Size = UDim2.new(0, W - SIDE_W - 1, 0, H - TOPBAR_H - 1)
+		end
+
+		for _, tab in ipairs(tabs) do
+			tab.applyStyle()
+		end
+		if current then
+			current.refresh()
+		end
+	end
+
+	---------------------------------------------------------------------------
+	-- Sliding between the Key System and this page
+	---------------------------------------------------------------------------
+	local opened, moving = false, false
+
+	local function open()
+		if opened or moving then
+			return
+		end
+		opened, moving = true, true
+		if ctx.onOpen then
+			ctx.onOpen()
+		end
+		if current then
+			current.refresh()
+		end
+		page.Visible = true
+		tween(page, SLIDE_TIME, { Position = UDim2.new(0.5, 0, 0.5, 0) }, Quint)
+		tween(content, SLIDE_TIME, { Position = UDim2.new(0.5, 0, 0.5, -H) }, Quint)
+		task.delay(SLIDE_TIME + 0.05, function()
+			moving = false
+		end)
+	end
+
+	local function back()
+		if not opened or moving then
+			return
+		end
+		opened, moving = false, true
+		tween(page, SLIDE_TIME, { Position = UDim2.new(0.5, 0, 0.5, H) }, Quint)
+		tween(content, SLIDE_TIME, { Position = UDim2.new(0.5, 0, 0.5, 0) }, Quint)
+		task.delay(SLIDE_TIME + 0.05, function()
+			if not opened then
+				page.Visible = false
+			end
+			moving = false
+		end)
+	end
+
+	-- Used when the whole UI closes while this page is showing
+	local function fadeOut(time)
+		if not page.Visible then
+			return
+		end
+		fade(prep(page), 0, time)
+		task.delay(time, function()
+			page.Visible = false
+		end)
+	end
+
+	-- The down arrow, in the middle of the bottom of the Key System. It only shows up
+	-- once there is at least one Tab, so a script that never creates one doesn't end up
+	-- with an arrow that leads to an empty page.
+	local nextBtn = make("TextButton", {
+		Name = "NextPage",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0, W / 2, 0, H - 2),
+		Size = UDim2.new(0, 40, 0, 20),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Text = "",
+		Visible = false,
+		ZIndex = 5,
+	}, content)
+	-- Same icon as the Submit button (Images.SUBMIT), turned to point down
+	local nextIcon = arrowIcon(nextBtn, NEXT_ARROW_ROTATION, 2)
+
+	nextBtn.MouseEnter:Connect(function()
+		tintArrow(nextIcon, C.text)
+	end)
+	nextBtn.MouseLeave:Connect(function()
+		tintArrow(nextIcon, C.muted)
+	end)
+	nextBtn.MouseButton1Click:Connect(function()
+		if not state.ready or state.closing then
+			return
+		end
+		open()
+	end)
+
+	backBtn.MouseButton1Click:Connect(function()
+		if not state.ready or state.closing then
+			return
+		end
+		back()
+	end)
+	closeBtn.MouseButton1Click:Connect(function()
+		ctx.requestClose()
+	end)
+
+	---------------------------------------------------------------------------
+	-- Tabs
+	---------------------------------------------------------------------------
+	local function styleTab(tab, on)
+		tween(tab.btn, 0.15, { BackgroundTransparency = on and 0 or 1 })
+		setRole(tab.label, "TextColor3", on and "text" or "muted")
+		if tab.iconImage then
+			local role = iconRole(on and "accent" or "muted")
+			if type(role) == "string" then
+				setRole(tab.iconImage, "ImageColor3", role)
+			end
+		end
+		tab.scroll.Visible = on
+	end
+
+	-- originals[inst][prop] = the resting transparency of that property, captured only once.
+	-- Switching Tabs quickly (while an animation is still running) then never records a
+	-- half-faded value as the "normal" one.
+	local originals = setmetatable({}, { __mode = "k" })
+
+	local function snapshot(child)
+		local items = prep(child)
+		for _, it in ipairs(items) do
+			local saved = originals[it[1]]
+			if not saved then
+				saved = {}
+				originals[it[1]] = saved
+			end
+			if saved[it[2]] == nil then
+				saved[it[2]] = it[3]
+			else
+				it[3] = saved[it[2]]
+			end
+		end
+		return items
+	end
+
+	-- Plays when a Tab becomes the selected one: the whole content rises a little and
+	-- every element (Section / Paragraph) fades in, one after the other.
+	local function animateIn(tab)
+		tab.animId = (tab.animId or 0) + 1
+		local id = tab.animId
+
+		local children = {}
+		for _, child in ipairs(tab.scroll:GetChildren()) do
+			if child:IsA("GuiObject") then
+				children[#children + 1] = child
+			end
+		end
+		table.sort(children, function(a, b)
+			return a.LayoutOrder < b.LayoutOrder
+		end)
+		if #children == 0 then
+			return
+		end
+
+		local lists = {}
+		for i, child in ipairs(children) do
+			local items = snapshot(child)
+			fade(items, 0) -- start fully transparent
+			lists[i] = items
+		end
+
+		tab.scroll.Position = UDim2.new(0, 0, 0, TAB_SLIDE)
+		tween(tab.scroll, TAB_IN_TIME + 0.08, { Position = UDim2.new(0, 0, 0, 0) }, Quint)
+
+		local step = math.min(TAB_STAGGER, TAB_STAGGER_MAX / #children)
+		for i, items in ipairs(lists) do
+			task.delay((i - 1) * step, function()
+				if tab.animId ~= id then
+					return -- a newer animation took over this Tab
+				end
+				fade(items, 1, TAB_IN_TIME)
+			end)
+		end
+	end
+
+	local function selectTab(tab, animate)
+		if current == tab then
+			return
+		end
+		if current then
+			styleTab(current, false)
+		end
+		current = tab
+		styleTab(tab, true)
+		tab.refresh()
+		if animate ~= false and (opened or page.Visible) then
+			animateIn(tab)
+		end
+	end
+
+	-- OphynWindow({ Title = "...", Icon = "..." }) -> Tab
+	local function createTab(props)
+		if type(props) ~= "table" then
+			props = { Title = props }
+		end
+		local title = props.Title ~= nil and tostring(props.Title) or "Tab"
+		local image = assetId(props.Icon)
+
+		local tab = {}
+
+		-- Tab button: the icon comes first, then the text. The icon + text live in `inner`
+		-- (it holds the layout and the side padding, so the button can size itself to the
+		-- text in style 2).
+		tab.btn = make("TextButton", {
+			Name = "Tab",
+			Size = UDim2.new(1, 0, 0, 30),
+			BackgroundColor3 = "card",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			AutoButtonColor = false,
+			Text = "",
+			LayoutOrder = #tabs + 1,
+		}, sidebar)
+		round(tab.btn, 7)
+
+		tab.inner = make("Frame", {
+			Name = "Inner",
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+		}, tab.btn)
+		tab.pad = make("UIPadding", {}, tab.inner)
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 6),
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, tab.inner)
+
+		if image then
+			local iconHolder = icon(tab.inner, 0, 0, "muted", image)
+			iconHolder.LayoutOrder = 1
+			tab.iconImage = iconHolder:FindFirstChild("iconimage")
+		end
+
+		tab.label = make("TextLabel", {
+			Size = UDim2.new(1, image and -22 or 0, 1, 0),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Text = title,
+			TextSize = 12,
+			TextColor3 = "muted",
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Center,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			FontFace = FONT,
+			LayoutOrder = 2,
+		}, tab.inner)
+
+		-- Lays the button out for the current Tabs style (also runs when the style changes)
+		tab.applyStyle = function()
+			if tabsStyle == "2" then
+				tab.btn.Size = UDim2.new(0, 0, 0, TAB_H_STYLE2)
+				tab.btn.AutomaticSize = Enum.AutomaticSize.X
+				tab.inner.Size = UDim2.new(0, 0, 1, 0)
+				tab.inner.AutomaticSize = Enum.AutomaticSize.X
+				tab.pad.PaddingLeft = UDim.new(0, 10)
+				tab.pad.PaddingRight = UDim.new(0, 12)
+				tab.label.Size = UDim2.new(0, 0, 1, 0)
+				tab.label.AutomaticSize = Enum.AutomaticSize.X
+			else
+				tab.btn.AutomaticSize = Enum.AutomaticSize.None
+				tab.btn.Size = UDim2.new(1, 0, 0, 30)
+				tab.inner.AutomaticSize = Enum.AutomaticSize.None
+				tab.inner.Size = UDim2.new(1, 0, 1, 0)
+				tab.pad.PaddingLeft = UDim.new(0, 12)
+				tab.pad.PaddingRight = UDim.new(0, 8)
+				tab.label.AutomaticSize = Enum.AutomaticSize.None
+				tab.label.Size = UDim2.new(1, image and -22 or 0, 1, 0)
+			end
+		end
+		tab.applyStyle()
+
+		-- The content of this Tab
+		tab.scroll = make("ScrollingFrame", {
+			Name = "TabContent",
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			CanvasSize = UDim2.new(0, 0, 0, 0),
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+			ElasticBehavior = Enum.ElasticBehavior.Never,
+			VerticalScrollBarInset = Enum.ScrollBarInset.None,
+			ScrollBarThickness = 2,
+			ScrollBarImageTransparency = 0.45,
+			Visible = false,
+		}, holder)
+		setRole(tab.scroll, "ScrollBarImageColor3", "muted")
+
+		local layout = make("UIListLayout", {
+			Padding = UDim.new(0, 8),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, tab.scroll)
+		make("UIPadding", {
+			PaddingTop = UDim.new(0, 12),
+			PaddingBottom = UDim.new(0, 12),
+			PaddingLeft = UDim.new(0, 12),
+			PaddingRight = UDim.new(0, 14),
+		}, tab.scroll)
+
+		tab.refresh = function()
+			tab.scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 24)
+		end
+		layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(tab.refresh)
+
+		tab.btn.MouseEnter:Connect(function()
+			if current ~= tab then
+				tween(tab.btn, 0.12, { BackgroundTransparency = 0.5 })
+			end
+		end)
+		tab.btn.MouseLeave:Connect(function()
+			if current ~= tab then
+				tween(tab.btn, 0.12, { BackgroundTransparency = 1 })
+			end
+		end)
+		tab.btn.MouseButton1Click:Connect(function()
+			if state.closing then
+				return
+			end
+			selectTab(tab)
+		end)
+
+		tabs[#tabs + 1] = tab
+		if not nextBtn.Visible then
+			nextBtn.Visible = true
+			-- first time the arrow shows up: make the engine request/draw its image again
+			task.defer(function()
+				nextIcon.Image = ""
+				nextIcon.Image = Images.SUBMIT
+			end)
+		end
+		if not current then
+			selectTab(tab, false)
+		end
+
+		-- Tab:Section / Tab:Paragraph
+		local order = 0
+		local function nextOrder()
+			order = order + 1
+			return order
+		end
+
+		local obj = {}
+
+		function obj:Select()
+			selectTab(tab)
+			return self
+		end
+
+		-- Tab:Section({ Title = "...", Icon = "..." }): the icon comes first, then the text
+		function obj:Section(p)
+			p = type(p) == "table" and p or {}
+			local sectionImage = assetId(p.Icon)
+
+			local row = make("Frame", {
+				Name = "Section",
+				Size = UDim2.new(1, 0, 0, 26),
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				LayoutOrder = nextOrder(),
+			}, tab.scroll)
+			make("UIListLayout", {
+				FillDirection = Enum.FillDirection.Horizontal,
+				Padding = UDim.new(0, 7),
+				VerticalAlignment = Enum.VerticalAlignment.Center,
+				SortOrder = Enum.SortOrder.LayoutOrder,
+			}, row)
+
+			if sectionImage then
+				local iconHolder = icon(row, 0, 0, "accent", sectionImage)
+				iconHolder.LayoutOrder = 1
+			end
+
+			local label = make("TextLabel", {
+				Size = UDim2.new(1, sectionImage and -23 or 0, 1, 0),
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Text = p.Title ~= nil and tostring(p.Title) or "Section",
+				TextSize = SECTION_TEXT_SIZE,
+				TextColor3 = "text",
+				TextTransparency = SECTION_TEXT_TRANSPARENCY,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextYAlignment = Enum.TextYAlignment.Center,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				FontFace = FONT_BOLD,
+				LayoutOrder = 2,
+			}, row)
+
+			local section = { Frame = row }
+			function section:SetTitle(str)
+				label.Text = tostring(str)
+				return self
+			end
+			function section:Destroy()
+				row:Destroy()
+			end
+			return section
+		end
+
+		-- Tab:Paragraph({ Title, Desc, Color, Buttons = { { Icon, Title, Callback } } })
+		function obj:Paragraph(p)
+			p = type(p) == "table" and p or {}
+			local color = parseColor(p.Color) -- nil: follows the theme
+			local onColor = color and contrastOn(color) or nil
+
+			local box = make("Frame", {
+				Name = "Paragraph",
+				Size = UDim2.new(1, 0, 0, 0),
+				AutomaticSize = Enum.AutomaticSize.Y,
+				BackgroundColor3 = color or "card",
+				BackgroundTransparency = 0,
+				BorderSizePixel = 0,
+				LayoutOrder = nextOrder(),
+			}, tab.scroll)
+			round(box, 8, (not color) and "stroke" or nil)
+			make("UIPadding", {
+				PaddingTop = UDim.new(0, 10),
+				PaddingBottom = UDim.new(0, 10),
+				PaddingLeft = UDim.new(0, 12),
+				PaddingRight = UDim.new(0, 12),
+			}, box)
+			make("UIListLayout", {
+				Padding = UDim.new(0, 6),
+				SortOrder = Enum.SortOrder.LayoutOrder,
+			}, box)
+
+			local function paragraphLabel(layoutOrder, size, font, textColor, str, transparency)
+				return make("TextLabel", {
+					Size = UDim2.new(1, 0, 0, 0),
+					AutomaticSize = Enum.AutomaticSize.Y,
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Text = str,
+					TextSize = size,
+					TextColor3 = textColor,
+					TextTransparency = transparency,
+					TextWrapped = true,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextYAlignment = Enum.TextYAlignment.Top,
+					FontFace = font,
+					LayoutOrder = layoutOrder,
+					Visible = str ~= "",
+				}, box)
+			end
+
+			local titleText = p.Title ~= nil and tostring(p.Title) or ""
+			local descText = p.Desc ~= nil and tostring(p.Desc) or ""
+			local titleLabel = paragraphLabel(1, 13, FONT_BOLD, onColor or "text", titleText, 0)
+			local descLabel = paragraphLabel(2, 12, FONT, onColor or "muted", descText, onColor and 0.2 or 0)
+
+			local buttons = type(p.Buttons) == "table" and p.Buttons or {}
+			if #buttons > 0 then
+				local row = make("Frame", {
+					Name = "Buttons",
+					Size = UDim2.new(1, 0, 0, 0),
+					AutomaticSize = Enum.AutomaticSize.Y,
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					LayoutOrder = 3,
+				}, box)
+				make("UIListLayout", {
+					FillDirection = Enum.FillDirection.Horizontal,
+					Wraps = true,
+					Padding = UDim.new(0, 6),
+					SortOrder = Enum.SortOrder.LayoutOrder,
+				}, row)
+
+				for i, b in ipairs(buttons) do
+					if type(b) == "table" then
+						local btn = make("TextButton", {
+							Name = "Button",
+							Size = UDim2.new(0, 0, 0, 26),
+							AutomaticSize = Enum.AutomaticSize.X,
+							BackgroundColor3 = color and onColor or "btn2",
+							BackgroundTransparency = color and 0.86 or 0,
+							BorderSizePixel = 0,
+							AutoButtonColor = false,
+							Text = "",
+							LayoutOrder = i,
+						}, row)
+						round(btn, 7, (not color) and "stroke" or nil)
+						make("UIPadding", {
+							PaddingLeft = UDim.new(0, 9),
+							PaddingRight = UDim.new(0, 10),
+						}, btn)
+						make("UIListLayout", {
+							FillDirection = Enum.FillDirection.Horizontal,
+							Padding = UDim.new(0, 6),
+							VerticalAlignment = Enum.VerticalAlignment.Center,
+							SortOrder = Enum.SortOrder.LayoutOrder,
+						}, btn)
+
+						-- icon first, then the text
+						local buttonImage = assetId(b.Icon)
+						if buttonImage then
+							local iconHolder = icon(btn, 0, 0, onColor or "text", buttonImage)
+							iconHolder.LayoutOrder = 1
+						end
+						make("TextLabel", {
+							Size = UDim2.new(0, 0, 1, 0),
+							AutomaticSize = Enum.AutomaticSize.X,
+							BackgroundTransparency = 1,
+							BorderSizePixel = 0,
+							Text = b.Title ~= nil and tostring(b.Title) or "Button",
+							TextSize = 12,
+							TextColor3 = onColor or "text",
+							TextXAlignment = Enum.TextXAlignment.Left,
+							TextYAlignment = Enum.TextYAlignment.Center,
+							FontFace = FONT,
+							LayoutOrder = 2,
+						}, btn)
+
+						btn.MouseEnter:Connect(function()
+							if color then
+								tween(btn, 0.12, { BackgroundTransparency = 0.72 })
+							else
+								tween(btn, 0.12, { BackgroundColor3 = C.btn2Hover })
+							end
+						end)
+						btn.MouseLeave:Connect(function()
+							if color then
+								tween(btn, 0.12, { BackgroundTransparency = 0.86 })
+							else
+								tween(btn, 0.12, { BackgroundColor3 = C.btn2 })
+							end
+						end)
+						btn.MouseButton1Click:Connect(function()
+							if state.closing or type(b.Callback) ~= "function" then
+								return
+							end
+							task.spawn(function()
+								local ok, err = pcall(b.Callback)
+								if not ok then
+									warn("[Ophyn] Button callback error: " .. tostring(err))
+								end
+							end)
+						end)
+					end
+				end
+			end
+
+			local paragraph = { Frame = box }
+			function paragraph:SetTitle(str)
+				titleLabel.Text = tostring(str)
+				titleLabel.Visible = titleLabel.Text ~= ""
+				return self
+			end
+			function paragraph:SetDesc(str)
+				descLabel.Text = tostring(str)
+				descLabel.Visible = descLabel.Text ~= ""
+				return self
+			end
+			function paragraph:Destroy()
+				box:Destroy()
+			end
+			return paragraph
+		end
+
+		return obj
+	end
+
+	applyTabsStyle()
+
+	-- KeySystem:SetTabsStyle("1" / "2") works before or after the window exists: ui.lua
+	-- calls this applier whenever the style changes. It returns false once the window is gone.
+	if ctx.registerTabsStyle then
+		ctx.registerTabsStyle(function()
+			if not page.Parent then
+				return false
+			end
+			local style = normalizeStyle(ctx.getTabsStyle and ctx.getTabsStyle())
+			if style ~= tabsStyle then
+				tabsStyle = style
+				applyTabsStyle()
+			end
+			return true
+		end)
+	end
+
+	return {
+		createTab = createTab,
+		open = open,
+		back = back,
+		fadeOut = fadeOut,
+		isOpen = function()
+			return opened
+		end,
+	}
+end
+
+return Pages
+end
+
 __modules["components/window/ui"] = function()
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local player = Players.LocalPlayer
 
@@ -754,6 +1683,8 @@ local Variables = import("variables")
 local Jnkie = import("utilities/jnkie")
 local Platoboost = import("utilities/platoboost")
 local Panda = import("utilities/panda")
+local Pages = import("components/window/pages")
+local Lucide = import("utilities/lucide")
 
 local FONT = Font.new(Images.FONT, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 local FONT_BOLD = Font.new(Images.FONT, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
@@ -1309,13 +2240,14 @@ local function icon(parent, x, y, color, image)
 		ImageTransparency = 0.9,
 		ZIndex = 0,
 	}, holder)
-	make("ImageLabel", {
+	local img = make("ImageLabel", {
 		Name = "iconimage",
 		Size = UDim2.new(1, 0, 1, 0),
 		BackgroundTransparency = 1,
-		Image = image,
 		ImageColor3 = iconRole(color),
 	}, holder)
+	-- `image` can be an asset id or a Lucide icon name ("house" / "lucide:house")
+	Lucide.apply(img, image)
 	return holder
 end
 
@@ -1391,6 +2323,8 @@ local function prep(container)
 				items[#items + 1] = { inst, "TextTransparency", inst.TextTransparency }
 			elseif inst:IsA("ImageLabel") or inst:IsA("ImageButton") then
 				items[#items + 1] = { inst, "ImageTransparency", inst.ImageTransparency }
+			elseif inst:IsA("ScrollingFrame") then
+				items[#items + 1] = { inst, "ScrollBarImageTransparency", inst.ScrollBarImageTransparency }
 			end
 		elseif inst:IsA("UIStroke") then
 			items[#items + 1] = { inst, "Transparency", inst.Transparency }
@@ -1513,6 +2447,21 @@ function UI.SetNotifStyle(style)
 	notifSettings.style = style ~= nil and tostring(style) or nil
 end
 
+-- Tabs style (TabsStyle / KeySystem:SetTabsStyle): "1" Tabs in a column on the left (default),
+-- "2" Tabs in a row right under the topbar. Works before or after KeySystem.new: windows that
+-- already exist re-layout themselves through the appliers they registered.
+local tabsSettings = { style = nil }
+local tabsAppliers = {}
+
+function UI.SetTabsStyle(style)
+	tabsSettings.style = style ~= nil and tostring(style) or nil
+	for i = #tabsAppliers, 1, -1 do
+		if tabsAppliers[i]() == false then
+			table.remove(tabsAppliers, i)
+		end
+	end
+end
+
 function UI.SetUIFont(font)
 	fontSettings.ui = resolveFont(font)
 	applyFontAll()
@@ -1609,7 +2558,37 @@ function UI.new(options)
 	local SHOW_INFO_CARD = cardFlag(true, "Informations", "Information", "informations", "information")
 	-- Only Discord enabled (no Website card): it starts expanded to fill the free space
 	local SHOW_INTRO = cardFlag(true, "Intro", "intro")
-	local DISCORD_STARTS_OPEN = SHOW_DISCORD_CARD and not SHOW_WEBSITE_CARD and HAS_DISCORD
+
+	-- Keyless mode: Keyless = { disabletextbox, disablegetkey, showcard, autoconfirm }.
+	-- Passing the table turns it on (enabled = false keeps it off); Keyless = true/false also works.
+	-- What the person passes to KeySystem.new wins over variables.lua.
+	local KL = { disabletextbox = true, disablegetkey = true, showcard = true, autoconfirm = false }
+	local KEYLESS = false
+	do
+		local raw
+		for _, source in ipairs({ options or {}, Variables }) do
+			local v = source.Keyless
+			if v == nil then
+				v = source.keyless
+			end
+			if v ~= nil then
+				raw = v
+				break
+			end
+		end
+		if type(raw) == "table" then
+			KEYLESS = asBool(raw.enabled, true)
+			for k, default in pairs(KL) do
+				KL[k] = asBool(raw[k], default)
+			end
+		elseif raw ~= nil then
+			KEYLESS = asBool(raw, false)
+		end
+	end
+	local SHOW_KEYLESS_CARD = KEYLESS and KL.showcard
+
+	-- With the Keyless card on, Discord starts collapsed so both cards fit
+	local DISCORD_STARTS_OPEN = SHOW_DISCORD_CARD and not SHOW_WEBSITE_CARD and HAS_DISCORD and not SHOW_KEYLESS_CARD
 
 	-- Notification style: "1" Stripe, "2" Pill, "3" Island, "4" Ring, "5" Solid
 	local NOTIF_STYLE = "1"
@@ -2229,7 +3208,7 @@ markTitleFont(hubTitle)
 	local hubSubtitle = text(left, HUB_SUBTITLE, 66, 42, 190, 14, 12, "muted")
 	hubSubtitle.TextTruncate = Enum.TextTruncate.AtEnd
 
-	text(left, "License key", 22, 78, 228, 14, 11, "muted")
+	local licenseLabel = text(left, "License key", 22, 78, 228, 14, 11, "muted")
 
 	local inputBox = frame(left, 22, 96, 228, 36, "input", 0)
 	inputBox.ClipsDescendants = true
@@ -2358,7 +3337,7 @@ markTitleFont(hubTitle)
 	end
 
 	methodArrow.MouseButton1Click:Connect(function()
-		if not state.ready or state.closing or #getMethods < 2 then
+		if not state.ready or state.closing or #getMethods < 2 or (KEYLESS and KL.disablegetkey) then
 			return
 		end
 		if methodDropdown.Visible then
@@ -2382,7 +3361,7 @@ markTitleFont(hubTitle)
 		getKey.Text = (title and title ~= "") and title or "Get a key"
 		local image = getKeyIcon:FindFirstChild("iconimage")
 		if image then
-			image.Image = assetId(iconValue) or assetId(getkeySettings.icon) or Images.KEY
+			Lucide.apply(image, assetId(iconValue) or assetId(getkeySettings.icon) or Images.KEY)
 		end
 		local showArrow = #getMethods > 1
 		methodArrow.Visible = showArrow
@@ -2456,6 +3435,27 @@ markTitleFont(hubTitle)
 
 	local rightDivider = frame(right, 20, 148, 147, 1, "stroke", 0)
 
+	-- Scrollable card list. Cards are laid out inside it (see layoutCards); once they
+	-- no longer fit it can be scrolled with the wheel, by touch, or by dragging.
+	-- CARD_PAD leaves room for the 1px outer card strokes, which would be clipped otherwise.
+	local CARD_PAD = 2
+	local CARD_VIEW_BOTTOM = 256 -- bottom edge of the visible card area
+	local cardScroll = make("ScrollingFrame", {
+		Name = "Cards",
+		Position = UDim2.new(0, 20 - CARD_PAD, 0, 158 - CARD_PAD),
+		Size = UDim2.new(0, 147 + CARD_PAD + 5, 0, CARD_VIEW_BOTTOM - 158 + CARD_PAD),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ElasticBehavior = Enum.ElasticBehavior.Never,
+		VerticalScrollBarInset = Enum.ScrollBarInset.None,
+		ScrollBarThickness = 2,
+		ScrollBarImageTransparency = 0.45,
+		ClipsDescendants = true,
+	}, right)
+	setRole(cardScroll, "ScrollBarImageColor3", "muted")
+
 	local function linkButton(y, title, subtitle, image)
 		local btn = make("TextButton", {
 			Name = "TextButton",
@@ -2465,7 +3465,7 @@ markTitleFont(hubTitle)
 			BorderSizePixel = 0,
 			AutoButtonColor = false,
 			Text = "",
-		}, right)
+		}, cardScroll)
 		round(btn, 8, "stroke")
 		local iconHolder = icon(btn, 11, 12, "accent", image)
 		local titleLabel = text(btn, title, 36, 6, 106, 14, 12, "text")
@@ -2526,6 +3526,46 @@ markTitleFont(hubTitle)
 	-- Information card: local stats only (valid keys, expired keys, last used)
 	local infoCard, infoIcon, infoTitle, infoSub = linkButton(254, "Information", "Tap to view", Images.KEY)
 	infoCard.Visible = SHOW_INFO_CARD
+	infoCard.ClipsDescendants = true
+	infoTitle.TextTruncate = Enum.TextTruncate.AtEnd
+
+	-- Expanded Information card: same look as the expanded Discord card
+	local INFO_OPEN_H = 92
+	-- Grouped in one table: UI.new is close to Lua's limit of 200 local variables.
+	local infoUI = {}
+	do
+		local extra = frame(infoCard, 0, 0, 147, INFO_OPEN_H)
+		extra.Visible = false
+		infoUI.extra = extra
+
+		local iconBox = frame(extra, 9, 7, 26, 26, "input", 0)
+		round(iconBox, 8, "stroke")
+		icon(iconBox, 5, 5, "accent", Images.KEY)
+
+		frame(extra, 10, 41, 127, 1, "stroke", 0)
+
+		local function stat(x, label, dotColor)
+			local num = text(extra, "0", x, 46, 62, 16, 13, "text")
+			markBoldFont(num)
+			local dot = frame(extra, x, 66, 6, 6, dotColor, 0)
+			make("UICorner", { CornerRadius = UDim.new(1, 0) }, dot)
+			text(extra, label, x + 10, 62, 50, 14, 10, "muted")
+			return num
+		end
+		infoUI.valid = stat(12, "Valid", "success")
+		infoUI.expired = stat(80, "Expired", "warn")
+
+		text(extra, "Last used", 12, 77, 56, 13, 10, "muted")
+		local lastUsed = text(extra, "Never", 66, 77, 69, 13, 11, "text", Enum.TextXAlignment.Right)
+		lastUsed.TextTruncate = Enum.TextTruncate.AtEnd
+		infoUI.lastUsed = lastUsed
+	end
+	infoUI.extraItems = prep(infoUI.extra)
+	infoUI.iconItems = prep(infoIcon)
+
+	-- Keyless Mode card: informational only (no click)
+	local keylessCard = linkButton(206, "Keyless Mode", "No key needed", Images.KEYLESS)
+	keylessCard.Visible = SHOW_KEYLESS_CARD
 
 	local closeBtn = make("TextButton", {
 		Name = "CloseButton",
@@ -2568,7 +3608,7 @@ markTitleFont(hubTitle)
 	local moonIcon = make("ImageLabel", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0.5, 0, 0.5, 0),
-		Size = UDim2.new(0, 12, 0, 12),
+		Size = UDim2.new(0, 10, 0, 10),
 		BackgroundTransparency = 1,
 		Image = MOON_ICON,
 		ImageColor3 = iconRole("muted"),
@@ -2577,6 +3617,115 @@ markTitleFont(hubTitle)
 	moonBtn.Visible = SHOW_CHANGE_THEME
 
 	local closeGui
+
+	-- Page 2: a down arrow at the bottom of the Key System slides it up and brings in the
+	-- topbar + Tabs (OphynWindow({ Title, Icon }), Tab:Section, Tab:Paragraph). Kept in ctx
+	-- so it doesn't take another local in UI.new (already close to Lua's limit). It is built
+	-- before prep(content) on purpose, so the arrow fades in and out with the Key System.
+	ctx.pages = Pages.new({
+		C = C,
+		make = make,
+		round = round,
+		tween = tween,
+		prep = prep,
+		fade = fade,
+		setRole = setRole,
+		icon = icon,
+		assetId = assetId,
+		contrastOn = contrastOn,
+		iconRole = iconRole,
+		logoRole = logoRole,
+		markTitleFont = markTitleFont,
+		-- SetTabsStyle wins over TabsStyle from KeySystem.new({ ... }) / variables.lua
+		getTabsStyle = function()
+			if tabsSettings.style then
+				return tabsSettings.style
+			end
+			for _, source in ipairs({ options or {}, Variables }) do
+				local value = source.TabsStyle
+				if value == nil then
+					value = source.tabsstyle
+				end
+				if value ~= nil then
+					return tostring(value)
+				end
+			end
+			return "1"
+		end,
+		registerTabsStyle = function(apply)
+			table.insert(tabsAppliers, apply)
+		end,
+		FONT = FONT,
+		FONT_BOLD = FONT_BOLD,
+		images = Images,
+		canvas = canvas,
+		content = content,
+		state = state,
+		width = FINAL_W,
+		height = FINAL_H,
+		title = HUB_NAME,
+		logo = LOGO,
+		onOpen = function()
+			closeMethodDropdown()
+		end,
+		requestClose = function()
+			if not state.ready or state.closing then
+				return
+			end
+			task.spawn(closeGui)
+		end,
+	})
+
+	-- Keyless mode: dim + lock the disabled parts. This runs BEFORE prep(content) on
+	-- purpose, so the dimmed transparencies become the "original" values that
+	-- fade() restores (a later fade-in would otherwise undo the dimming).
+	if KEYLESS then
+		local DIM = 0.5
+		local function dim(container)
+			local function apply(inst)
+				if inst:IsA("GuiObject") then
+					inst.BackgroundTransparency = 1 - (1 - inst.BackgroundTransparency) * DIM
+					if inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
+						inst.TextTransparency = 1 - (1 - inst.TextTransparency) * DIM
+					elseif inst:IsA("ImageLabel") or inst:IsA("ImageButton") then
+						inst.ImageTransparency = 1 - (1 - inst.ImageTransparency) * DIM
+					end
+				elseif inst:IsA("UIStroke") then
+					inst.Transparency = 1 - (1 - inst.Transparency) * DIM
+				end
+			end
+			apply(container)
+			for _, d in ipairs(container:GetDescendants()) do
+				apply(d)
+			end
+		end
+
+		if KL.disabletextbox then
+			dim(licenseLabel)
+			dim(inputBox)
+			pcall(function()
+				keyBox.TextEditable = false
+				keyBox.Active = false
+				keyBox.Interactable = false
+			end)
+			keyBox.Focused:Connect(function()
+				keyBox:ReleaseFocus()
+			end)
+		end
+
+		if KL.disablegetkey then
+			dim(getKey)
+			pcall(function()
+				getKey.Active = false
+				getKey.Interactable = false
+				methodArrow.Active = false
+				methodArrow.Interactable = false
+			end)
+		end
+
+		statusValue.Text = "Keyless"
+		setRole(statusValue, "TextColor3", "accent")
+	end
 
 	local spinnerItems = prep(spinnerHolder)
 	local contentItems = prep(content)
@@ -2659,6 +3808,9 @@ markTitleFont(hubTitle)
 
 	getKey.MouseButton1Click:Connect(function()
 		if not state.ready or state.closing then
+			return
+		end
+		if KEYLESS and KL.disablegetkey then
 			return
 		end
 
@@ -2760,6 +3912,11 @@ markTitleFont(hubTitle)
 	local discordInfo = { fetching = false, ok = false, iconLoaded = false, last = 0, online = 0, offline = 0 }
 
 	local discordOpen = false
+	local infoOpen = false
+
+	local function anyCardOpen()
+		return discordOpen or infoOpen
+	end
 
 	local function refreshDiscordTitle()
 		local target = (discordOpen and discordInfo.name) or "Discord"
@@ -2863,13 +4020,17 @@ markTitleFont(hubTitle)
 		task.spawn(fetchDiscord)
 	end
 
-	-- Stacks whichever cards are enabled (Discord, Website, Information, in that
-	-- order), shifting Website/Information down while Discord is expanded and back
-	-- up when it collapses.
+	-- Stacks whichever cards are enabled (Discord, Keyless, Website, Information, in
+	-- that order) inside the scroll frame. Expanding a card (Discord / Information)
+	-- pushes the cards below it down and moves the whole list up, hiding the
+	-- Executor / Status rows. Anything that doesn't fit becomes scrollable.
 	local CARD_GAP = 8
 	local cardOrder = {}
 	if SHOW_DISCORD_CARD then
 		table.insert(cardOrder, discord)
+	end
+	if SHOW_KEYLESS_CARD then
+		table.insert(cardOrder, keylessCard)
 	end
 	if SHOW_WEBSITE_CARD then
 		table.insert(cardOrder, website)
@@ -2878,31 +4039,142 @@ markTitleFont(hubTitle)
 		table.insert(cardOrder, infoCard)
 	end
 
-	local function layoutCards(instant)
-		local Quint = Enum.EasingStyle.Quint
-		local divider = discordOpen and 106 or 148
-		if instant then
-			rightDivider.Position = UDim2.new(0, 20, 0, divider)
-		else
-			tween(rightDivider, 0.55, { Position = UDim2.new(0, 20, 0, divider) }, Quint)
+	local function cardHeight(card)
+		if card == discord and discordOpen then
+			return 82
 		end
+		if card == infoCard and infoOpen then
+			return INFO_OPEN_H
+		end
+		return 40
+	end
 
-		local y = discordOpen and 114 or 158
+	local layoutToken = 0
+
+	-- focusCard: scrolled into view when the layout changes (used when a card expands)
+	local function layoutCards(instant, focusCard)
+		local Quint = Enum.EasingStyle.Quint
+		local open = anyCardOpen()
+		local divider = open and 106 or 148
+		local top = open and 114 or 158
+
+		local y = CARD_PAD
+		local focusTop, focusBottom
 		for _, card in ipairs(cardOrder) do
-			local h = (card == discord and discordOpen) and 82 or 40
+			local h = cardHeight(card)
+			if card == focusCard then
+				focusTop, focusBottom = y - CARD_PAD, y + h + CARD_PAD
+			end
 			if instant then
-				card.Position = UDim2.new(0, 20, 0, y)
+				card.Position = UDim2.new(0, CARD_PAD, 0, y)
 				card.Size = UDim2.new(0, 147, 0, h)
 			else
 				tween(card, 0.55, {
-					Position = UDim2.new(0, 20, 0, y),
+					Position = UDim2.new(0, CARD_PAD, 0, y),
 					Size = UDim2.new(0, 147, 0, h),
 				}, Quint)
 			end
 			y = y + h + CARD_GAP
 		end
+
+		local canvasH = math.max(y - CARD_GAP + CARD_PAD, 0)
+		local viewH = CARD_VIEW_BOTTOM - top + CARD_PAD
+		local maxPos = math.max(canvasH - viewH, 0)
+		local pos = cardScroll.CanvasPosition.Y
+		local targetPos = math.clamp(pos, 0, maxPos)
+		if focusTop then
+			if focusBottom > targetPos + viewH then
+				targetPos = focusBottom - viewH
+			end
+			if focusTop < targetPos then
+				targetPos = focusTop
+			end
+			targetPos = math.clamp(targetPos, 0, maxPos)
+		end
+
+		local scrollPos = UDim2.new(0, 20 - CARD_PAD, 0, top - CARD_PAD)
+		local scrollSize = UDim2.new(0, 147 + CARD_PAD + 5, 0, viewH)
+		local canvasSize = UDim2.new(0, 0, 0, canvasH)
+
+		layoutToken += 1
+		local token = layoutToken
+
+		if instant then
+			rightDivider.Position = UDim2.new(0, 20, 0, divider)
+			cardScroll.Position = scrollPos
+			cardScroll.Size = scrollSize
+			cardScroll.CanvasSize = canvasSize
+			cardScroll.CanvasPosition = Vector2.new(0, targetPos)
+			return
+		end
+
+		tween(rightDivider, 0.55, { Position = UDim2.new(0, 20, 0, divider) }, Quint)
+
+		-- Grow the canvas right away (so the scroll target is reachable); shrink it only
+		-- once the cards finished moving (so the position doesn't get clamped mid-tween).
+		if canvasH >= cardScroll.CanvasSize.Y.Offset then
+			cardScroll.CanvasSize = canvasSize
+		else
+			task.delay(0.58, function()
+				if token == layoutToken then
+					cardScroll.CanvasSize = canvasSize
+				end
+			end)
+		end
+		tween(cardScroll, 0.55, {
+			Position = scrollPos,
+			Size = scrollSize,
+			CanvasPosition = Vector2.new(0, targetPos),
+		}, Quint)
 	end
 	layoutCards(true)
+
+	-- Dragging the card list with the mouse (the wheel and touch scroll natively).
+	-- A drag never counts as a click on the card under the cursor.
+	local suppressClick = false
+	do
+	local dragging, dragStartY, dragStartCanvas = false, 0, 0
+	local function onPress(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 or dragging or not state.ready then
+			return
+		end
+		if cardScroll.CanvasSize.Y.Offset <= cardScroll.AbsoluteSize.Y then
+			return
+		end
+		dragging = true
+		dragStartY = input.Position.Y
+		dragStartCanvas = cardScroll.CanvasPosition.Y
+	end
+	cardScroll.InputBegan:Connect(onPress)
+	for _, card in ipairs(cardOrder) do
+		card.InputBegan:Connect(onPress)
+	end
+	local dragMove = UserInputService.InputChanged:Connect(function(input)
+		if not dragging or input.UserInputType ~= Enum.UserInputType.MouseMovement then
+			return
+		end
+		local delta = input.Position.Y - dragStartY
+		if not suppressClick and math.abs(delta) < 5 then
+			return
+		end
+		suppressClick = true
+		local maxPos = math.max(cardScroll.CanvasSize.Y.Offset - cardScroll.AbsoluteSize.Y, 0)
+		cardScroll.CanvasPosition = Vector2.new(0, math.clamp(dragStartCanvas - delta, 0, maxPos))
+	end)
+	local dragEnd = UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 or not dragging then
+			return
+		end
+		dragging = false
+		task.delay(0.1, function()
+			suppressClick = false
+		end)
+	end)
+	root.Destroying:Connect(function()
+		dragMove:Disconnect()
+		dragEnd:Disconnect()
+	end)
+	end
 
 	local discordToken = 0
 
@@ -2913,7 +4185,7 @@ markTitleFont(hubTitle)
 		local token = discordToken
 		local Quint = Enum.EasingStyle.Quint
 
-		layoutCards()
+		layoutCards(false, open and discord or nil)
 
 		local textX = open and 40 or 36
 		tween(discordTitle, 0.4, { Position = UDim2.new(0, textX, 0, 6) }, Quint)
@@ -2922,7 +4194,7 @@ markTitleFont(hubTitle)
 			Size = UDim2.new(0, open and 102 or 106, 0, 13),
 		}, Quint)
 
-		fade(rowsItems, open and 0 or 1, 0.25)
+		fade(rowsItems, anyCardOpen() and 0 or 1, 0.25)
 		fade(discordIconItems, open and 0 or 1, 0.2)
 
 		if open then
@@ -2961,7 +4233,7 @@ markTitleFont(hubTitle)
 	end
 
 	discord.MouseButton1Click:Connect(function()
-		if not state.ready or state.closing then
+		if not state.ready or state.closing or suppressClick then
 			return
 		end
 		if not HAS_DISCORD then
@@ -2972,6 +4244,9 @@ markTitleFont(hubTitle)
 	end)
 
 	linkHit.MouseButton1Click:Connect(function()
+		if suppressClick then
+			return
+		end
 		copyLink(LINKS.discord, "Discord invite", "discord")
 	end)
 	linkHit.MouseEnter:Connect(function()
@@ -2983,7 +4258,7 @@ markTitleFont(hubTitle)
 		tween(discordSub, 0.15, { TextColor3 = C.muted })
 	end)
 	website.MouseButton1Click:Connect(function()
-		if not state.ready or state.closing then
+		if not state.ready or state.closing or suppressClick then
 			return
 		end
 		if not HAS_WEBSITE then
@@ -2993,34 +4268,107 @@ markTitleFont(hubTitle)
 		copyLink(LINKS.website, "Website link", "link")
 	end)
 
-	infoCard.MouseButton1Click:Connect(function()
-		if not state.ready or state.closing then
+	local function refreshInfo()
+		infoUI.valid.Text = formatNumber(STATS.valid)
+		infoUI.expired.Text = formatNumber(STATS.expired)
+		infoUI.lastUsed.Text = formatAgo(STATS.last)
+	end
+	refreshInfo()
+
+	do
+	local function setLabelText(label, str)
+		if label.Text == str then
 			return
 		end
-		notify(
-			"Key history",
-			("Valid: %d   Expired: %d   Last used: %s"):format(STATS.valid, STATS.expired, formatAgo(STATS.last)),
-			"success",
-			"key",
-			6
-		)
+		if not state.ready then
+			label.Text = str
+			return
+		end
+		tween(label, 0.12, { TextTransparency = 1 })
+		task.delay(0.12, function()
+			if state.closing then
+				return
+			end
+			label.Text = str
+			tween(label, 0.15, { TextTransparency = 0 })
+		end)
+	end
+
+	local infoToken = 0
+
+	local function setInfo(open)
+		infoOpen = open
+		infoToken += 1
+		local token = infoToken
+		local Quint = Enum.EasingStyle.Quint
+
+		if open then
+			refreshInfo()
+		end
+		setLabelText(infoSub, open and "Key history" or "Tap to view")
+
+		layoutCards(false, open and infoCard or nil)
+
+		local textX = open and 40 or 36
+		tween(infoTitle, 0.4, { Position = UDim2.new(0, textX, 0, 6) }, Quint)
+		tween(infoSub, 0.4, {
+			Position = UDim2.new(0, textX, 0, 21),
+			Size = UDim2.new(0, open and 102 or 106, 0, 13),
+		}, Quint)
+
+		fade(rowsItems, anyCardOpen() and 0 or 1, 0.25)
+		fade(infoUI.iconItems, open and 0 or 1, 0.2)
+
+		if open then
+			infoUI.extra.Visible = true
+			fade(infoUI.extraItems, 0)
+			task.delay(0.15, function()
+				if token == infoToken then
+					fade(infoUI.extraItems, 1, 0.3)
+				end
+			end)
+		else
+			fade(infoUI.extraItems, 0, 0.15)
+			task.delay(0.17, function()
+				if token == infoToken then
+					infoUI.extra.Visible = false
+				end
+			end)
+		end
+	end
+
+	infoCard.MouseButton1Click:Connect(function()
+		if not state.ready or state.closing or suppressClick then
+			return
+		end
+		setInfo(not infoOpen)
 	end)
+	end
 
 	local checkingKey = false
 
-	local openHidden = {}
+	-- While a card is expanded the Executor/Status rows stay hidden, and the small
+	-- icon of the expanded card is replaced by its bigger one
+	local fadeContent
+	do
+	local rowsHidden, discordIconHidden, infoIconHidden = {}, {}, {}
 	for _, it in ipairs(rowsItems) do
-		openHidden[it[1]] = true
+		rowsHidden[it[1]] = true
 	end
 	for _, it in ipairs(discordIconItems) do
-		openHidden[it[1]] = true
+		discordIconHidden[it[1]] = true
+	end
+	for _, it in ipairs(infoUI.iconItems) do
+		infoIconHidden[it[1]] = true
 	end
 
-	local function fadeContent(alpha, time)
-		if discordOpen and alpha > 0 then
+	function fadeContent(alpha, time)
+		if anyCardOpen() and alpha > 0 then
 			local filtered = {}
 			for _, it in ipairs(contentItems) do
-				if not openHidden[it[1]] then
+				local inst = it[1]
+				local hide = rowsHidden[inst] or (discordOpen and discordIconHidden[inst]) or (infoOpen and infoIconHidden[inst])
+				if not hide then
 					filtered[#filtered + 1] = it
 				end
 			end
@@ -3028,6 +4376,7 @@ markTitleFont(hubTitle)
 		else
 			fade(contentItems, alpha, time)
 		end
+	end
 	end
 
 	local function resetCheckScreen()
@@ -3099,6 +4448,10 @@ markTitleFont(hubTitle)
 
 		local result
 		task.spawn(function()
+			if KEYLESS then
+				result = { ok = true, valid = true }
+				return
+			end
 			local ok, valid, reason = pcall(validateKey, key)
 			result = { ok = ok, valid = valid, reason = reason }
 		end)
@@ -3127,6 +4480,7 @@ markTitleFont(hubTitle)
 				if detail:lower():find("expir") then
 					STATS.expired += 1
 					saveStats()
+					refreshInfo()
 				end
 				notify("Invalid key", detail, "error")
 			else
@@ -3139,17 +4493,23 @@ markTitleFont(hubTitle)
 			return
 		end
 
-		statusValue.Text = "Key valid"
-		setRole(statusValue, "TextColor3", "success")
-		checkText.Text = isSavedKey and "Saved Key Found!" or "Correct Key!"
+		if KEYLESS then
+			statusValue.Text = "Keyless"
+			setRole(statusValue, "TextColor3", "accent")
+			checkText.Text = "Keyless Access!"
+		else
+			statusValue.Text = "Key valid"
+			setRole(statusValue, "TextColor3", "success")
+			checkText.Text = isSavedKey and "Saved Key Found!" or "Correct Key!"
 
-		if KEY_SAVE then
-			safeWriteFile(KEY_FILE, key)
+			if KEY_SAVE then
+				safeWriteFile(KEY_FILE, key)
+			end
+
+			STATS.valid += 1
+			STATS.last = os.time()
+			saveStats()
 		end
-
-		STATS.valid += 1
-		STATS.last = os.time()
-		saveStats()
 
 		fade(spinnerItems, 0, 0.25)
 		task.wait(0.25)
@@ -3256,6 +4616,11 @@ markTitleFont(hubTitle)
 			return
 		end
 
+		if KEYLESS then
+			runKeyCheck("") -- the Callback receives an empty key in keyless mode
+			return
+		end
+
 		local key = keyBox.Text:match("^%s*(.-)%s*$")
 		if key == "" then
 			notify("Empty key", "Paste your key in the box first.", "warn", "key")
@@ -3280,6 +4645,7 @@ markTitleFont(hubTitle)
 		if not SHOW_INTRO then
 			-- No intro: plain fade-out
 			fadeContent(0, 0.3)
+			ctx.pages.fadeOut(0.3)
 			tween(canvas, 0.35, { BackgroundTransparency = 1 })
 			tween(decorGroup, 0.35, { GroupTransparency = 1 })
 			tween(borderStroke, 0.35, { Transparency = 1 })
@@ -3290,6 +4656,7 @@ markTitleFont(hubTitle)
 		end
 
 		fadeContent(0, 0.2)
+		ctx.pages.fadeOut(0.2)
 
 		task.wait(0.2)
 		content.Visible = false
@@ -3447,7 +4814,12 @@ markTitleFont(hubTitle)
 		task.wait(0.3)
 		state.ready = true
 
-		if SAVED_KEY and not checkingKey then
+		if KEYLESS then
+			if KL.autoconfirm and not checkingKey then
+				task.wait(0.15)
+				runKeyCheck("") -- the Callback receives an empty key in keyless mode
+			end
+		elseif SAVED_KEY and not checkingKey then
 			keyBox.Text = SAVED_KEY
 			task.wait(0.15)
 			runKeyCheck(SAVED_KEY, true)
@@ -3470,6 +4842,11 @@ markTitleFont(hubTitle)
 		return self
 	end
 	api.NotifStyle = api.SetNotifStyle
+	function api:SetTabsStyle(style)
+		UI.SetTabsStyle(style)
+		return self
+	end
+	api.TabsStyle = api.SetTabsStyle
 	function api:GetMethod(entry)
 		UI.GetMethod(entry)
 		return self
@@ -3482,9 +4859,16 @@ markTitleFont(hubTitle)
 		UI.SetTitleFont(font)
 		return self
 	end
+	-- OphynWindow:Tab({ Title = "...", Icon = "..." }) -> Tab (same as OphynWindow({ ... }))
+	function api:Tab(props)
+		return ctx.pages.createTab(props)
+	end
 	api.Gui = root
 
 	return setmetatable(api, {
+		__call = function(_, props)
+			return ctx.pages.createTab(props)
+		end,
 		__index = function(_, key)
 			local value = root[key]
 			if type(value) == "function" then
@@ -3519,6 +4903,7 @@ local Images = {
 	MOON_ICON = "rbxassetid://83380517901735",
 	SHADOW = "rbxassetid://6014261993",
 	GAME_PLACEHOLDER = "rbxassetid://74584987850498",
+	KEYLESS = "rbxassetid://130551565616516",
 }
 
 return Images
@@ -3645,6 +5030,192 @@ function Jnkie:Validator()
 end
 
 return Jnkie
+end
+
+__modules["utilities/lucide"] = function()
+-- src/utilities/lucide.lua
+-- Lucide icon support, backed by https://github.com/Footagesus/Icons (lucide/dist/Icons.lua).
+--
+-- Anywhere the UI takes an `Icon`, you can now pass a Lucide name instead of an asset id:
+--
+--   Tab:Section({ Title = "Main", Icon = "house" })
+--   Tab:Section({ Title = "Main", Icon = "lucide:house" }) -- same thing, explicit prefix
+--
+-- Asset ids ("rbxassetid://...", a bare number, "rbxthumb://...") keep working exactly as before.
+--
+-- The icon pack is a spritesheet: every icon is a rect inside a bigger image, so a resolved
+-- icon is { Image, RectSize, RectOffset } and not just one asset id. The pack is only
+-- downloaded the first time a Lucide name is actually used (and cached after that), so
+-- scripts that only use asset ids never pay for it.
+
+local Lucide = {}
+
+local PACK_URL = "https://raw.githubusercontent.com/Footagesus/Icons/refs/heads/main/lucide/dist/Icons.lua"
+local PREFIX = "lucide:"
+
+local pack = nil -- the loaded icon pack
+local failed = false -- the download/parse failed, don't keep retrying
+local loading = false
+local preloaded = {} -- spritesheets that already went through ContentProvider
+local warned = {} -- names that already printed a warning
+
+local function fetch(url)
+	local ok, body = pcall(function()
+		return game:HttpGet(url)
+	end)
+	if ok and type(body) == "string" and body ~= "" then
+		return body
+	end
+	ok, body = pcall(function()
+		return game:HttpGetAsync(url)
+	end)
+	if ok and type(body) == "string" and body ~= "" then
+		return body
+	end
+	return nil
+end
+
+local function loadPack()
+	if pack or failed then
+		return pack
+	end
+	if loading then
+		-- another thread is already downloading it: wait for that one
+		while loading do
+			task.wait()
+		end
+		return pack
+	end
+
+	loading = true
+	local ok, result = pcall(function()
+		local body = fetch(PACK_URL)
+		if not body then
+			error("could not download the icon pack")
+		end
+		local chunk, err = loadstring(body)
+		if not chunk then
+			error(err)
+		end
+		return chunk()
+	end)
+	loading = false
+
+	if ok and type(result) == "table" then
+		pack = result
+	else
+		failed = true
+		warn("[Ophyn] Lucide icons unavailable: " .. tostring(result))
+	end
+	return pack
+end
+
+-- "rbxassetid://123" / 123 / "123" -> "rbxassetid://123"; anything else string-like is kept
+local function toAsset(value)
+	if type(value) == "number" then
+		return "rbxassetid://" .. tostring(math.floor(value))
+	end
+	if type(value) == "string" and value:match("^%d+$") then
+		return "rbxassetid://" .. value
+	end
+	return value
+end
+
+-- true when `value` should be looked up in the Lucide pack (instead of used as an asset id)
+function Lucide.isName(value)
+	if type(value) ~= "string" or value == "" then
+		return false
+	end
+	if value:match("^%d+$") then
+		return false -- bare asset id
+	end
+	if value:match("^rbx%a*://") or value:match("^https?://") then
+		return false -- rbxassetid:// / rbxthumb:// / rbxasset:// / urls
+	end
+	return true
+end
+
+local function stripPrefix(name)
+	if name:sub(1, #PREFIX):lower() == PREFIX then
+		return name:sub(#PREFIX + 1)
+	end
+	return name
+end
+
+local function preload(sheet)
+	if preloaded[sheet] then
+		return
+	end
+	preloaded[sheet] = true
+	task.spawn(function()
+		pcall(function()
+			game:GetService("ContentProvider"):PreloadAsync({ sheet })
+		end)
+	end)
+end
+
+-- Returns { Image = "rbxassetid://...", RectSize = Vector2, RectOffset = Vector2 }
+-- or nil when the name is unknown (or the pack could not be loaded).
+function Lucide.resolve(value)
+	if not Lucide.isName(value) then
+		return nil
+	end
+
+	local name = stripPrefix(value):lower():gsub("_", "-")
+	local loaded = loadPack()
+	if not loaded then
+		return nil
+	end
+
+	local icons = loaded.Icons or loaded
+	local entry = type(icons) == "table" and icons[name] or nil
+	if type(entry) ~= "table" then
+		if not warned[name] then
+			warned[name] = true
+			warn('[Ophyn] unknown Lucide icon "' .. tostring(value) .. '"')
+		end
+		return nil
+	end
+
+	local sheet = entry.Image
+	if type(loaded.Spritesheets) == "table" and loaded.Spritesheets[tostring(entry.Image)] ~= nil then
+		sheet = loaded.Spritesheets[tostring(entry.Image)]
+	end
+	sheet = toAsset(sheet)
+	if type(sheet) ~= "string" then
+		return nil
+	end
+
+	preload(sheet)
+	return {
+		Image = sheet,
+		RectSize = entry.ImageRectSize or Vector2.new(0, 0),
+		RectOffset = entry.ImageRectPosition or entry.ImageRectOffset or Vector2.new(0, 0),
+	}
+end
+
+-- Points an ImageLabel/ImageButton at `value`, which can be a Lucide name or an asset id.
+-- Always resets the sprite rect, so an icon can be swapped between the two kinds safely.
+function Lucide.apply(label, value)
+	local sprite = Lucide.resolve(value)
+	if sprite then
+		label.Image = sprite.Image
+		label.ImageRectSize = sprite.RectSize
+		label.ImageRectOffset = sprite.RectOffset
+		return true
+	end
+
+	label.ImageRectSize = Vector2.new(0, 0)
+	label.ImageRectOffset = Vector2.new(0, 0)
+	if Lucide.isName(value) then
+		label.Image = "" -- a Lucide name that could not be resolved: draw nothing
+		return false
+	end
+	label.Image = value or ""
+	return value ~= nil
+end
+
+return Lucide
 end
 
 __modules["utilities/panda"] = function()
@@ -4123,7 +5694,7 @@ return {
 	-- Themes Config
 	Changelogocolor = true,
 	Changeiconscolor = true,
-	ChangeTheme = true, -- false: hides the moon (theme switch) icon
+	ChangeTheme = "true", -- "false": disable moon icon to change Theme
 
 	-- Section Config
 	discord_link = "",
@@ -4134,8 +5705,20 @@ return {
 	Website = "false",
 	Informations = "true",
 
+	-- Keyless mode: no key needed. Status becomes "Keyless" and Submit runs the Callback directly.
+	Keyless = {
+		enabled = false, -- true: turns keyless mode on
+		disabletextbox = true, -- dims the key box and blocks typing
+		disablegetkey = true, -- dims "Get a key" and blocks clicks
+		showcard = true, -- shows the "Keyless Mode" card
+		autoconfirm = false, -- true: runs the Callback automatically when the UI opens
+	},
+
 	-- Notification style
 	NotifStyle = "1",
+
+	-- Tabs style: "1" = Tabs in a column on the left, "2" = Tabs in a row under the topbar
+	TabsStyle = "1",
 
 	-- Games
 	SupportedGames = {},
@@ -4178,6 +5761,15 @@ function KeySystem.SetNotifStyle(a, b)
 end
 
 KeySystem.NotifStyle = KeySystem.SetNotifStyle
+
+-- Works as KeySystem:SetTabsStyle("2") / KeySystem.SetTabsStyle("2") ("1": Tabs on the left,
+-- "2": Tabs in a row under the topbar), before or after KeySystem.new(...).
+function KeySystem.SetTabsStyle(a, b)
+	import("components/window/ui").SetTabsStyle(firstArg(a, b))
+	return KeySystem
+end
+
+KeySystem.TabsStyle = KeySystem.SetTabsStyle
 
 -- Works as KeySystem:GetMethod({...}) / KeySystem.GetMethod({...}), same as the
 -- other Set* helpers above: usable standalone, before KeySystem.new(...) exists.
