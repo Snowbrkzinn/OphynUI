@@ -1,3 +1,6 @@
+-- src/components/window/pages.lua
+-- yeah, cool.
+
 local Pages = {}
 
 local NAMED_COLORS = {
@@ -17,6 +20,8 @@ local NAMED_COLORS = {
 	black = Color3.fromRGB(16, 16, 16),
 }
 
+-- Accepts a Color3, a color name ("Red", "Blue", ...) or a hex string ("#RRGGBB").
+-- Returns nil for anything else, which makes the Paragraph follow the theme.
 local function parseColor(value)
 	if value == nil or value == "" then
 		return nil
@@ -51,54 +56,55 @@ function Pages.new(ctx)
 	local SLIDE_TIME = 0.55
 	local Quint = Enum.EasingStyle.Quint
 
+	-- Section title look: a bit bigger than before and slightly see-through
 	local SECTION_TEXT_SIZE = 15
 	local SECTION_TEXT_TRANSPARENCY = 0.35
 
+	-- Switching Tabs: the content rises a few pixels while its elements fade in one after
+	-- the other (the stagger is capped so a Tab with many elements doesn't feel slow)
 	local TAB_SLIDE = 10
 	local TAB_IN_TIME = 0.32
 	local TAB_STAGGER = 0.045
 	local TAB_STAGGER_MAX = 0.4
 
+	-- Both arrows (down: show the Tabs / up: back to the Key System) reuse the Submit
+	-- button's icon. If that icon points right, 90 turns it to point down and -90 up;
+	-- change this if the arrows end up facing the wrong way.
 	local NEXT_ARROW_ROTATION = 90
+	local BACK_ARROW_ROTATION = -NEXT_ARROW_ROTATION
 
+	-- Tabs style 2 (a row under the topbar)
+	local TABS_BAR_H = 34
+	local TAB_H_STYLE2 = 26
+
+	-- false when "Change icons color" is off: icons stay white and are never recolored
 	local tintIcons = type(iconRole("muted")) == "string"
 
-	local function chevron(parent, down, role, scale)
-		scale = scale or 1
-		local cw, ch = 16 * scale, 10 * scale
-		local holder = make("Frame", {
-			Size = UDim2.new(0, cw, 0, ch),
+	-- The arrows: the Submit button's icon in one single ImageLabel, rotated on the label
+	-- itself (not on a parent frame) and placed with plain offsets, so it renders right
+	-- from the first frame. `drop` pushes it down a few pixels inside its button.
+	local function arrowIcon(parent, rotation, drop)
+		local img = make("ImageLabel", {
+			Name = "ArrowIcon",
+			Position = UDim2.new(0.5, -8, 0.5, -8 + (drop or 0)),
+			Size = UDim2.new(0, 16, 0, 16),
 			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
+			Image = Images.SUBMIT,
+			ImageColor3 = iconRole("muted"),
+			Rotation = rotation,
+			ZIndex = 6,
 		}, parent)
-
-		local arm = 7.5 * scale
-		local dx = arm / 2 * math.cos(math.rad(40))
-		local dy = arm / 2 * math.sin(math.rad(40))
-		local tipX = cw / 2
-		local tipY = down and (ch - 2 * scale) or (2 * scale)
-		local lift = down and -dy or dy
-
-		local bars = {}
-		for _, side in ipairs({ -1, 1 }) do
-			local bar = make("Frame", {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = UDim2.new(0, tipX + side * dx, 0, tipY + lift),
-				Size = UDim2.new(0, arm + 1, 0, math.max(2, 2 * scale)),
-				Rotation = (down and -side or side) * 40,
-				BackgroundColor3 = role,
-				BackgroundTransparency = 0,
-				BorderSizePixel = 0,
-			}, holder)
-			make("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
-			bars[#bars + 1] = bar
-		end
-		return holder, bars
+		task.spawn(function()
+			pcall(function()
+				game:GetService("ContentProvider"):PreloadAsync({ img })
+			end)
+		end)
+		return img
 	end
 
-	local function tintBars(bars, color)
-		for _, bar in ipairs(bars) do
-			tween(bar, 0.15, { BackgroundColor3 = color })
+	local function tintArrow(img, color)
+		if tintIcons then
+			tween(img, 0.15, { ImageColor3 = color })
 		end
 	end
 
@@ -112,6 +118,9 @@ function Pages.new(ctx)
 		}, parent)
 	end
 
+	---------------------------------------------------------------------------
+	-- The page itself: starts one window-height below, hidden
+	---------------------------------------------------------------------------
 	local page = make("Frame", {
 		Name = "Page2",
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -122,6 +131,7 @@ function Pages.new(ctx)
 		Visible = false,
 	}, canvas)
 
+	-- Topbar: logo + title on the left, back arrow + close on the right
 	local topbar = make("Frame", {
 		Name = "Topbar",
 		Size = UDim2.new(0, W, 0, TOPBAR_H),
@@ -182,9 +192,7 @@ function Pages.new(ctx)
 	}, closeBtn)
 
 	local backBtn = topButton(40)
-	local backChevron, backBars = chevron(backBtn, false, "muted", 0.9)
-	backChevron.AnchorPoint = Vector2.new(0.5, 0.5)
-	backChevron.Position = UDim2.new(0.5, 0, 0.5, 0)
+	local backIcon = arrowIcon(backBtn, BACK_ARROW_ROTATION, 0)
 
 	closeBtn.MouseEnter:Connect(function()
 		tween(closeBtn, 0.15, { BackgroundTransparency = 0 })
@@ -200,51 +208,118 @@ function Pages.new(ctx)
 	end)
 	backBtn.MouseEnter:Connect(function()
 		tween(backBtn, 0.15, { BackgroundTransparency = 0 })
-		tintBars(backBars, C.text)
+		tintArrow(backIcon, C.text)
 	end)
 	backBtn.MouseLeave:Connect(function()
 		tween(backBtn, 0.15, { BackgroundTransparency = 1 })
-		tintBars(backBars, C.muted)
+		tintArrow(backIcon, C.muted)
 	end)
 
-	line(page, 14, TOPBAR_H, W - 28, 1)
+	-- Tabs style: "1" = column on the left, "2" = row right under the topbar
+	local tabsStyle = "1"
+	local function normalizeStyle(value)
+		value = tostring(value or "1"):lower()
+		if value == "2" or value == "horizontal" or value == "row" then
+			return "2"
+		end
+		return "1"
+	end
+	if ctx.getTabsStyle then
+		tabsStyle = normalizeStyle(ctx.getTabsStyle())
+	end
 
+	-- Style 1 draws the line under the topbar; style 2 draws it under the row of Tabs
+	local topLine = line(page, 14, TOPBAR_H, W - 28, 1)
+	local tabsLine = line(page, 14, TOPBAR_H + TABS_BAR_H, W - 28, 1)
+	local sideLine = line(page, SIDE_W, TOPBAR_H + 10, 1, H - TOPBAR_H - 20)
+
+	-- Tabs (a column in style 1, a row in style 2)
 	local sidebar = make("ScrollingFrame", {
 		Name = "Tabs",
-		Position = UDim2.new(0, 0, 0, TOPBAR_H + 1),
-		Size = UDim2.new(0, SIDE_W, 0, H - TOPBAR_H - 1),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		CanvasSize = UDim2.new(0, 0, 0, 0),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ScrollingDirection = Enum.ScrollingDirection.Y,
 		ElasticBehavior = Enum.ElasticBehavior.Never,
 		ScrollBarThickness = 0,
 	}, page)
-	make("UIListLayout", {
+	local sideLayout = make("UIListLayout", {
 		Padding = UDim.new(0, 4),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}, sidebar)
-	make("UIPadding", {
-		PaddingTop = UDim.new(0, 10),
-		PaddingBottom = UDim.new(0, 10),
-		PaddingLeft = UDim.new(0, 10),
-		PaddingRight = UDim.new(0, 10),
-	}, sidebar)
+	local sidePadding = make("UIPadding", {}, sidebar)
 
-	line(page, SIDE_W, TOPBAR_H + 10, 1, H - TOPBAR_H - 20)
-
+	-- Where the selected Tab's content shows up
 	local holder = make("Frame", {
 		Name = "TabContent",
-		Position = UDim2.new(0, SIDE_W + 1, 0, TOPBAR_H + 1),
-		Size = UDim2.new(0, W - SIDE_W - 1, 0, H - TOPBAR_H - 1),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ClipsDescendants = true,
 	}, page)
 
-	local opened, moving = false, false
+	-- mouse wheel scrolls the row sideways in style 2
+	sidebar.InputChanged:Connect(function(input)
+		if tabsStyle == "2" and input.UserInputType == Enum.UserInputType.MouseWheel then
+			local maxX = math.max(0, sidebar.AbsoluteCanvasSize.X - sidebar.AbsoluteWindowSize.X)
+			local x = sidebar.CanvasPosition.X - input.Position.Z * 30
+			sidebar.CanvasPosition = Vector2.new(math.clamp(x, 0, maxX), 0)
+		end
+	end)
+
+	local tabs = {}
 	local current = nil
+
+	local function applyTabsStyle()
+		local row = tabsStyle == "2"
+
+		topLine.Visible = not row
+		sideLine.Visible = not row
+		tabsLine.Visible = row
+
+		sidebar.CanvasPosition = Vector2.new(0, 0)
+		sidebar.AutomaticCanvasSize = Enum.AutomaticSize.None
+		sidebar.CanvasSize = UDim2.new(0, 0, 0, 0)
+		if row then
+			sidebar.Position = UDim2.new(0, 0, 0, TOPBAR_H)
+			sidebar.Size = UDim2.new(0, W, 0, TABS_BAR_H)
+			sidebar.ScrollingDirection = Enum.ScrollingDirection.X
+			sidebar.AutomaticCanvasSize = Enum.AutomaticSize.X
+			sideLayout.FillDirection = Enum.FillDirection.Horizontal
+			sideLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+			sidePadding.PaddingTop = UDim.new(0, 0)
+			sidePadding.PaddingBottom = UDim.new(0, 0)
+			sidePadding.PaddingLeft = UDim.new(0, 12)
+			sidePadding.PaddingRight = UDim.new(0, 12)
+
+			holder.Position = UDim2.new(0, 0, 0, TOPBAR_H + TABS_BAR_H + 1)
+			holder.Size = UDim2.new(0, W, 0, H - TOPBAR_H - TABS_BAR_H - 1)
+		else
+			sidebar.Position = UDim2.new(0, 0, 0, TOPBAR_H + 1)
+			sidebar.Size = UDim2.new(0, SIDE_W, 0, H - TOPBAR_H - 1)
+			sidebar.ScrollingDirection = Enum.ScrollingDirection.Y
+			sidebar.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			sideLayout.FillDirection = Enum.FillDirection.Vertical
+			sideLayout.VerticalAlignment = Enum.VerticalAlignment.Top
+			sidePadding.PaddingTop = UDim.new(0, 10)
+			sidePadding.PaddingBottom = UDim.new(0, 10)
+			sidePadding.PaddingLeft = UDim.new(0, 10)
+			sidePadding.PaddingRight = UDim.new(0, 10)
+
+			holder.Position = UDim2.new(0, SIDE_W + 1, 0, TOPBAR_H + 1)
+			holder.Size = UDim2.new(0, W - SIDE_W - 1, 0, H - TOPBAR_H - 1)
+		end
+
+		for _, tab in ipairs(tabs) do
+			tab.applyStyle()
+		end
+		if current then
+			current.refresh()
+		end
+	end
+
+	---------------------------------------------------------------------------
+	-- Sliding between the Key System and this page
+	---------------------------------------------------------------------------
+	local opened, moving = false, false
 
 	local function open()
 		if opened or moving then
@@ -280,6 +355,7 @@ function Pages.new(ctx)
 		end)
 	end
 
+	-- Used when the whole UI closes while this page is showing
 	local function fadeOut(time)
 		if not page.Visible then
 			return
@@ -290,6 +366,9 @@ function Pages.new(ctx)
 		end)
 	end
 
+	-- The down arrow, in the middle of the bottom of the Key System. It only shows up
+	-- once there is at least one Tab, so a script that never creates one doesn't end up
+	-- with an arrow that leads to an empty page.
 	local nextBtn = make("TextButton", {
 		Name = "NextPage",
 		AnchorPoint = Vector2.new(0.5, 1),
@@ -302,24 +381,14 @@ function Pages.new(ctx)
 		Visible = false,
 		ZIndex = 5,
 	}, content)
-
-	local nextIcon = icon(nextBtn, 0, 0, "muted", Images.SUBMIT)
-	nextIcon.AnchorPoint = Vector2.new(0.5, 0.5)
-	nextIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
-	nextIcon.Rotation = NEXT_ARROW_ROTATION
-	local nextIconImage = nextIcon:FindFirstChild("iconimage")
-
-	local function tintNext(color)
-		if tintIcons and nextIconImage then
-			tween(nextIconImage, 0.15, { ImageColor3 = color })
-		end
-	end
+	-- Same icon as the Submit button (Images.SUBMIT), turned to point down
+	local nextIcon = arrowIcon(nextBtn, NEXT_ARROW_ROTATION, 2)
 
 	nextBtn.MouseEnter:Connect(function()
-		tintNext(C.text)
+		tintArrow(nextIcon, C.text)
 	end)
 	nextBtn.MouseLeave:Connect(function()
-		tintNext(C.muted)
+		tintArrow(nextIcon, C.muted)
 	end)
 	nextBtn.MouseButton1Click:Connect(function()
 		if not state.ready or state.closing then
@@ -338,8 +407,9 @@ function Pages.new(ctx)
 		ctx.requestClose()
 	end)
 
-	local tabs = {}
-
+	---------------------------------------------------------------------------
+	-- Tabs
+	---------------------------------------------------------------------------
 	local function styleTab(tab, on)
 		tween(tab.btn, 0.15, { BackgroundTransparency = on and 0 or 1 })
 		tween(tab.bar, 0.15, { BackgroundTransparency = on and 0 or 1 })
@@ -353,6 +423,9 @@ function Pages.new(ctx)
 		tab.scroll.Visible = on
 	end
 
+	-- originals[inst][prop] = the resting transparency of that property, captured only once.
+	-- Switching Tabs quickly (while an animation is still running) then never records a
+	-- half-faded value as the "normal" one.
 	local originals = setmetatable({}, { __mode = "k" })
 
 	local function snapshot(child)
@@ -372,6 +445,8 @@ function Pages.new(ctx)
 		return items
 	end
 
+	-- Plays when a Tab becomes the selected one: the whole content rises a little and
+	-- every element (Section / Paragraph) fades in, one after the other.
 	local function animateIn(tab)
 		tab.animId = (tab.animId or 0) + 1
 		local id = tab.animId
@@ -392,7 +467,7 @@ function Pages.new(ctx)
 		local lists = {}
 		for i, child in ipairs(children) do
 			local items = snapshot(child)
-			fade(items, 0)
+			fade(items, 0) -- start fully transparent
 			lists[i] = items
 		end
 
@@ -403,7 +478,7 @@ function Pages.new(ctx)
 		for i, items in ipairs(lists) do
 			task.delay((i - 1) * step, function()
 				if tab.animId ~= id then
-					return
+					return -- a newer animation took over this Tab
 				end
 				fade(items, 1, TAB_IN_TIME)
 			end)
@@ -425,6 +500,7 @@ function Pages.new(ctx)
 		end
 	end
 
+	-- OphynWindow({ Title = "...", Icon = "..." }) -> Tab
 	local function createTab(props)
 		if type(props) ~= "table" then
 			props = { Title = props }
@@ -434,6 +510,9 @@ function Pages.new(ctx)
 
 		local tab = {}
 
+		-- Tab button: the icon comes first, then the text. The icon + text live in `inner`
+		-- (it holds the layout and the side padding, so the button can size itself to the
+		-- text in style 2); the active-tab bar sits on the button itself.
 		tab.btn = make("TextButton", {
 			Name = "Tab",
 			Size = UDim2.new(1, 0, 0, 30),
@@ -455,16 +534,28 @@ function Pages.new(ctx)
 		}, tab.btn)
 		make("UICorner", { CornerRadius = UDim.new(1, 0) }, tab.bar)
 
-		local textX = 12
+		tab.inner = make("Frame", {
+			Name = "Inner",
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+		}, tab.btn)
+		tab.pad = make("UIPadding", {}, tab.inner)
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 6),
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, tab.inner)
+
 		if image then
-			local iconHolder = icon(tab.btn, 12, 7, "muted", image)
+			local iconHolder = icon(tab.inner, 0, 0, "muted", image)
+			iconHolder.LayoutOrder = 1
 			tab.iconImage = iconHolder:FindFirstChild("iconimage")
-			textX = 34
 		end
 
 		tab.label = make("TextLabel", {
-			Position = UDim2.new(0, textX, 0, 0),
-			Size = UDim2.new(1, -(textX + 8), 1, 0),
+			Size = UDim2.new(1, image and -22 or 0, 1, 0),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Text = title,
@@ -474,8 +565,40 @@ function Pages.new(ctx)
 			TextYAlignment = Enum.TextYAlignment.Center,
 			TextTruncate = Enum.TextTruncate.AtEnd,
 			FontFace = FONT,
-		}, tab.btn)
+			LayoutOrder = 2,
+		}, tab.inner)
 
+		-- Lays the button out for the current Tabs style (also runs when the style changes)
+		tab.applyStyle = function()
+			if tabsStyle == "2" then
+				tab.btn.Size = UDim2.new(0, 0, 0, TAB_H_STYLE2)
+				tab.btn.AutomaticSize = Enum.AutomaticSize.X
+				tab.inner.Size = UDim2.new(0, 0, 1, 0)
+				tab.inner.AutomaticSize = Enum.AutomaticSize.X
+				tab.pad.PaddingLeft = UDim.new(0, 10)
+				tab.pad.PaddingRight = UDim.new(0, 12)
+				tab.label.Size = UDim2.new(0, 0, 1, 0)
+				tab.label.AutomaticSize = Enum.AutomaticSize.X
+				tab.bar.AnchorPoint = Vector2.new(0.5, 1)
+				tab.bar.Position = UDim2.new(0.5, 0, 1, -2)
+				tab.bar.Size = UDim2.new(1, -16, 0, 2)
+			else
+				tab.btn.AutomaticSize = Enum.AutomaticSize.None
+				tab.btn.Size = UDim2.new(1, 0, 0, 30)
+				tab.inner.AutomaticSize = Enum.AutomaticSize.None
+				tab.inner.Size = UDim2.new(1, 0, 1, 0)
+				tab.pad.PaddingLeft = UDim.new(0, 12)
+				tab.pad.PaddingRight = UDim.new(0, 8)
+				tab.label.AutomaticSize = Enum.AutomaticSize.None
+				tab.label.Size = UDim2.new(1, image and -22 or 0, 1, 0)
+				tab.bar.AnchorPoint = Vector2.new(0, 0)
+				tab.bar.Position = UDim2.new(0, 2, 0.5, -8)
+				tab.bar.Size = UDim2.new(0, 3, 0, 16)
+			end
+		end
+		tab.applyStyle()
+
+		-- The content of this Tab
 		tab.scroll = make("ScrollingFrame", {
 			Name = "TabContent",
 			Size = UDim2.new(1, 0, 1, 0),
@@ -525,11 +648,19 @@ function Pages.new(ctx)
 		end)
 
 		tabs[#tabs + 1] = tab
-		nextBtn.Visible = true
+		if not nextBtn.Visible then
+			nextBtn.Visible = true
+			-- first time the arrow shows up: make the engine request/draw its image again
+			task.defer(function()
+				nextIcon.Image = ""
+				nextIcon.Image = Images.SUBMIT
+			end)
+		end
 		if not current then
 			selectTab(tab, false)
 		end
 
+		-- Tab:Section / Tab:Paragraph
 		local order = 0
 		local function nextOrder()
 			order = order + 1
@@ -543,6 +674,7 @@ function Pages.new(ctx)
 			return self
 		end
 
+		-- Tab:Section({ Title = "...", Icon = "..." }): the icon comes first, then the text
 		function obj:Section(p)
 			p = type(p) == "table" and p or {}
 			local sectionImage = assetId(p.Icon)
@@ -592,9 +724,10 @@ function Pages.new(ctx)
 			return section
 		end
 
+		-- Tab:Paragraph({ Title, Desc, Color, Buttons = { { Icon, Title, Callback } } })
 		function obj:Paragraph(p)
 			p = type(p) == "table" and p or {}
-			local color = parseColor(p.Color)
+			local color = parseColor(p.Color) -- nil: follows the theme
 			local onColor = color and contrastOn(color) or nil
 
 			local box = make("Frame", {
@@ -684,6 +817,7 @@ function Pages.new(ctx)
 							SortOrder = Enum.SortOrder.LayoutOrder,
 						}, btn)
 
+						-- icon first, then the text
 						local buttonImage = assetId(b.Icon)
 						if buttonImage then
 							local iconHolder = icon(btn, 0, 0, onColor or "text", buttonImage)
@@ -750,6 +884,24 @@ function Pages.new(ctx)
 		end
 
 		return obj
+	end
+
+	applyTabsStyle()
+
+	-- KeySystem:SetTabsStyle("1" / "2") works before or after the window exists: ui.lua
+	-- calls this applier whenever the style changes. It returns false once the window is gone.
+	if ctx.registerTabsStyle then
+		ctx.registerTabsStyle(function()
+			if not page.Parent then
+				return false
+			end
+			local style = normalizeStyle(ctx.getTabsStyle and ctx.getTabsStyle())
+			if style ~= tabsStyle then
+				tabsStyle = style
+				applyTabsStyle()
+			end
+			return true
+		end)
 	end
 
 	return {
