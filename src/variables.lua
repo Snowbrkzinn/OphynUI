@@ -41,6 +41,9 @@ return {
 	-- Notification style
 	NotifStyle = "1",
 
+	-- Tabs style: "1" = Tabs in a column on the left, "2" = Tabs in a row under the topbar
+	TabsStyle = "1",
+
 	-- Games
 	SupportedGames = {},
 
