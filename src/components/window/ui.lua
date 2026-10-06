@@ -775,6 +775,21 @@ function UI.SetNotifStyle(style)
 	notifSettings.style = style ~= nil and tostring(style) or nil
 end
 
+-- Tabs style (TabsStyle / KeySystem:SetTabsStyle): "1" Tabs in a column on the left (default),
+-- "2" Tabs in a row right under the topbar. Works before or after KeySystem.new: windows that
+-- already exist re-layout themselves through the appliers they registered.
+local tabsSettings = { style = nil }
+local tabsAppliers = {}
+
+function UI.SetTabsStyle(style)
+	tabsSettings.style = style ~= nil and tostring(style) or nil
+	for i = #tabsAppliers, 1, -1 do
+		if tabsAppliers[i]() == false then
+			table.remove(tabsAppliers, i)
+		end
+	end
+end
+
 function UI.SetUIFont(font)
 	fontSettings.ui = resolveFont(font)
 	applyFontAll()
@@ -1949,6 +1964,25 @@ markTitleFont(hubTitle)
 		iconRole = iconRole,
 		logoRole = logoRole,
 		markTitleFont = markTitleFont,
+		-- SetTabsStyle wins over TabsStyle from KeySystem.new({ ... }) / variables.lua
+		getTabsStyle = function()
+			if tabsSettings.style then
+				return tabsSettings.style
+			end
+			for _, source in ipairs({ options or {}, Variables }) do
+				local value = source.TabsStyle
+				if value == nil then
+					value = source.tabsstyle
+				end
+				if value ~= nil then
+					return tostring(value)
+				end
+			end
+			return "1"
+		end,
+		registerTabsStyle = function(apply)
+			table.insert(tabsAppliers, apply)
+		end,
 		FONT = FONT,
 		FONT_BOLD = FONT_BOLD,
 		images = Images,
@@ -3136,6 +3170,11 @@ markTitleFont(hubTitle)
 		return self
 	end
 	api.NotifStyle = api.SetNotifStyle
+	function api:SetTabsStyle(style)
+		UI.SetTabsStyle(style)
+		return self
+	end
+	api.TabsStyle = api.SetTabsStyle
 	function api:GetMethod(entry)
 		UI.GetMethod(entry)
 		return self
